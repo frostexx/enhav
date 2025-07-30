@@ -1,3 +1,11 @@
+/**
+ * Enhanced Pi Network Transfer Flood Bot - Server
+ * Version: 2.0.0
+ * Date: 2025-07-30
+ * 
+ * Web server and socket.io interface for the bot
+ */
+
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -6,6 +14,9 @@ const path = require('path');
 const PiNetworkTransferFloodBot = require('./pi-transfer-flood-enhanced');
 const axios = require('axios');
 const { performance } = require('perf_hooks');
+const bip39 = require('bip39');
+const { derivePath } = require('ed25519-hd-key');
+const { keypairFromPassphrase } = require('./keypair-helper');
 
 // Constants
 const PORT = process.env.PORT || 3000;
@@ -164,19 +175,34 @@ io.on('connection', (socket) => {
             const mnemonic = data.passphrase.trim();
             
             try {
-                // Test if we can derive a valid keypair
-                keypair = StellarSdk.Keypair.fromSecret(
-                    StellarSdk.getSeedFromMnemonic(mnemonic)
-                );
+                // Use our helper function to derive the keypair properly
+                keypair = keypairFromPassphrase(mnemonic);
                 publicKey = keypair.publicKey();
+                
+                console.log("Successfully derived keypair for", publicKey);
                 
                 // Store passphrase securely for this connection
                 passphrase = mnemonic;
                 activePassphrases.set(socket.id, passphrase);
                 
-                // Get account info and balance
-                const server = new StellarSdk.Server(HORIZON_URL);
-                const account = await server.loadAccount(publicKey);
+                // Get account info and balance with redundancy
+                let account = null;
+                let error = null;
+                
+                for (const url of HORIZON_URLS) {
+                    try {
+                        const server = new StellarSdk.Server(url);
+                        account = await server.loadAccount(publicKey);
+                        if (account) break;
+                    } catch (e) {
+                        error = e;
+                        continue;
+                    }
+                }
+                
+                if (!account && error) {
+                    throw error;
+                }
                 
                 const nativeBalance = account.balances.find(b => b.asset_type === 'native');
                 const balance = nativeBalance ? nativeBalance.balance : '0';

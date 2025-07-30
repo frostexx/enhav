@@ -1,3 +1,12 @@
+/**
+ * Enhanced Pi Network Transfer Flood Bot
+ * Version: 2.0.0
+ * Date: 2025-07-30
+ * 
+ * Designed to compete with Rust/Go implementations using high-precision timing
+ * and multi-threaded transaction submission
+ */
+
 const StellarSdk = require('stellar-sdk');
 const WebSocket = require('ws');
 const bip39 = require('bip39');

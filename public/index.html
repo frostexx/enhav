@@ -43,7 +43,7 @@
             color: #dc3545;
         }
         .hidden {
-            display: none;
+            display: none !important;
         }
         .balance-item {
             cursor: pointer;
@@ -384,6 +384,17 @@
         const precisionStatus = document.getElementById('precision-status');
         const precisionIndicator = document.getElementById('precision-indicator');
         const precisionModeText = document.getElementById('precision-mode');
+        
+        // Make sure login is visible and dashboard is hidden on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loginSection.classList.remove('hidden');
+            dashboardSection.classList.add('hidden');
+            
+            // Add stronger CSS rule for hidden class
+            const style = document.createElement('style');
+            style.textContent = '.hidden { display: none !important; }';
+            document.head.appendChild(style);
+        });
         
         // Store balances data
         let lockedBalancesData = [];
