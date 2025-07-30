@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Pi Transfer Flood Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .wallet-address {
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        .log-container {
+            height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.85rem;
+            background-color: #000;
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .log-line {
+            margin: 0;
+            padding: 2px 0;
+        }
+        .log-info {
+            color: #17a2b8;
+        }
+        .log-success {
+            color: #28a745;
+        }
+        .log-warning {
+            color: #ffc107;
+        }
+        .log-error {
+            color: #dc3545;
+        }
+        .hidden {
+            display: none;
+        }
+        .balance-item {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .balance-item:hover {
+            background-color: #f0f0f0;
+        }
+        .balance-item.selected {
+            background-color: #e2f0ff !important;
+        }
+        .copy-btn {
+            cursor: pointer;
+            color: #6c757d;
+        }
+        .copy-btn:hover {
+            color: #0d6efd;
+        }
+        .unlock-time-display {
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-top: 0.25rem;
+        }
+        .stats-card {
+            border-left: 4px solid #0d6efd;
+        }
+        .countdown-display {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #0d6efd;
+            font-family: monospace;
+        }
+        .refresh-icon {
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+        .refresh-icon:hover {
+            transform: rotate(180deg);
+        }
+        #network-time {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .blinking {
+            animation: blinking 1s infinite;
+        }
+        @keyframes blinking {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .precision-indicator {
+            height: 10px;
+            width: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+        .precision-normal {
+            background-color: #6c757d;
+        }
+        .precision-high {
+            background-color: #ffc107;
+        }
+        .precision-ultra {
+            background-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-4">
+        <div class="row mb-4">
+            <div class="col-12">
+                <h1 class="text-center mb-0">
+                    <span class="text-primary">Enhanced</span> Pi Transfer Flood Bot
+                </h1>
+                <p class="text-center text-muted">High-Precision Timing · Multi-Threaded · Network-Synchronized</p>
+                
+                <!-- System status indicator -->
+                <div class="d-flex justify-content-center align-items-center">
+                    <div id="system-status" class="d-flex align-items-center">
+                        <small class="text-muted me-3">
+                            <span id="network-time">--:--:--</span>
+                            <i class="bi bi-arrow-repeat ms-1 refresh-icon" id="sync-time-btn" title="Sync time with network"></i>
+                        </small>
+                        
+                        <div class="d-flex align-items-center me-3">
+                            <span class="precision-indicator precision-normal" id="precision-indicator"></span>
+                            <small class="text-muted" id="precision-mode">Normal Mode</small>
+                        </div>
+                        
+                        <small class="text-muted">
+                            Time offset: <span id="time-offset">0</span>ms
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Login Section -->
+        <div id="login-section" class="row justify-content-center">
+            <div class="col-md-8 col-lg-6">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">Login with Pi Wallet Passphrase</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="passphrase" class="form-label">Enter your 24-word recovery phrase</label>
+                            <textarea class="form-control" id="passphrase" rows="3" placeholder="Enter your 24-word recovery phrase"></textarea>
+                            <div class="form-text text-muted">
+                                Your passphrase never leaves this device. It is used to sign transactions locally.
+                            </div>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button id="login-btn" class="btn btn-primary">
+                                <i class="bi bi-wallet2"></i> Login
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Dashboard Section (initially hidden) -->
+        <div id="dashboard-section" class="row hidden">
+            <!-- Wallet Information -->
+            <div class="col-12 mb-4">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Pi Wallet</h5>
+                        <div>
+                            <button id="refresh-balance-btn" class="btn btn-sm btn-outline-light me-2">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Balance
+                            </button>
+                            <button id="show-txn-history-btn" class="btn btn-sm btn-outline-light">
+                                <i class="bi bi-clock-history"></i> Transaction History
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h5 class="mb-2">Public Key</h5>
+                                <div class="d-flex align-items-center mb-3">
+                                    <span id="public-key" class="wallet-address me-2"></span>
+                                    <i class="bi bi-clipboard copy-btn" data-target="public-key" title="Copy to clipboard"></i>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h5 class="mb-2">Available Balance</h5>
+                                <div class="d-flex align-items-center">
+                                    <h3 id="available-balance" class="mb-0"></h3>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <h5>Locked Balances</h5>
+                                <div class="list-group mb-2" id="locked-balances-list">
+                                    <div class="list-group-item text-center py-3 text-muted" id="no-locked-balances">
+                                        No locked balances found
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bot Control Panel -->
+            <div class="col-12 mb-4">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">Bot Control Panel</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="transfer-fields-container">
+                            <div class="mb-4">
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="target-address" class="form-label">Target Address</label>
+                                        <input type="text" class="form-control" id="target-address" placeholder="Enter target wallet address">
+                                        <small class="form-text text-muted">The Pi wallet to receive the transfer</small>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="transfer-amount" class="form-label">Transfer Amount (optional)</label>
+                                        <div class="input-group">
+                                            <input type="number" class="form-control" id="transfer-amount" placeholder="Leave blank to use max available">
+                                            <span class="input-group-text">π</span>
+                                        </div>
+                                        <small class="form-text text-muted">If blank, 95% of available balance will be used</small>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="base-fee" class="form-label">Base Fee (stroops)</label>
+                                        <input type="number" class="form-control" id="base-fee" value="3200000">
+                                        <small class="form-text text-muted">Recommended: 3200000+ for competitive transfers</small>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <div class="mb-2">
+                                            <strong>Selected Unlock Time:</strong>
+                                        </div>
+                                        <div id="unlock-time-display" class="unlock-time-display text-primary">
+                                            No unlock time selected
+                                        </div>
+                                        <input type="hidden" id="unlock-time-ms" value="">
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="form-text text-info">
+                                        <strong>Note:</strong> Select a locked balance from the list to set the unlock time automatically.
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Countdown Timer (shown when unlock time is set and approaching) -->
+                            <div id="countdown-container" class="mb-4 hidden">
+                                <div class="card bg-light border-primary">
+                                    <div class="card-body text-center">
+                                        <h6 class="card-title">Time until execution</h6>
+                                        <div id="countdown-display" class="countdown-display">00:00:00.000</div>
+                                        <div id="precision-status" class="text-muted small mt-2">
+                                            Normal precision monitoring active
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="d-grid gap-2">
+                                <button id="start-bot" class="btn btn-primary">START BOT</button>
+                                <button id="stop-bot" class="btn btn-danger hidden">STOP BOT</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Live Log Viewer -->
+            <div class="col-12">
+                <div class="card shadow mb-4">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Live Log</h5>
+                        <button id="clear-log" class="btn btn-sm btn-outline-light">Clear</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="log-container" class="log-container">
+                            <p class="log-line log-info">System initialized. Waiting for commands...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Transaction History Modal -->
+    <div class="modal fade" id="txn-history-modal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-scrollable modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">Transaction History</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="loading-txns" class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading transactions...</p>
+                    </div>
+                    
+                    <div id="no-txns-found" class="text-center py-5 hidden">
+                        <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+                        <p class="mt-2">No transactions found</p>
+                    </div>
+                    
+                    <div id="txn-history-content">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Type</th>
+                                    <th>Amount</th>
+                                    <th>Fee</th>
+                                    <th>Hash</th>
+                                </tr>
+                            </thead>
+                            <tbody id="txn-history-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Connect to Socket.IO server
+        const socket = io();
+        
+        // DOM elements
+        const loginSection = document.getElementById('login-section');
+        const dashboardSection = document.getElementById('dashboard-section');
+        const passphraseInput = document.getElementById('passphrase');
+        const loginBtn = document.getElementById('login-btn');
+        const publicKeyEl = document.getElementById('public-key');
+        const availableBalanceEl = document.getElementById('available-balance');
+        const lockedBalancesList = document.getElementById('locked-balances-list');
+        const noLockedBalances = document.getElementById('no-locked-balances');
+        const refreshBalanceBtn = document.getElementById('refresh-balance-btn');
+        const showTxnHistoryBtn = document.getElementById('show-txn-history-btn');
+        const txnHistoryModal = new bootstrap.Modal(document.getElementById('txn-history-modal'));
+        const txnHistoryBody = document.getElementById('txn-history-body');
+        const noTxnsFound = document.getElementById('no-txns-found');
+        const loadingTxns = document.getElementById('loading-txns');
+        const startBotBtn = document.getElementById('start-bot');
+        const stopBotBtn = document.getElementById('stop-bot');
+        const targetAddressInput = document.getElementById('target-address');
+        const transferAmountInput = document.getElementById('transfer-amount');
+        const baseFeeInput = document.getElementById('base-fee');
+        const unlockTimeDisplay = document.getElementById('unlock-time-display');
+        const unlockTimeMs = document.getElementById('unlock-time-ms');
+        const logContainer = document.getElementById('log-container');
+        const clearLogBtn = document.getElementById('clear-log');
+        const networkTimeEl = document.getElementById('network-time');
+        const timeOffsetEl = document.getElementById('time-offset');
+        const syncTimeBtn = document.getElementById('sync-time-btn');
+        const countdownContainer = document.getElementById('countdown-container');
+        const countdownDisplay = document.getElementById('countdown-display');
+        const precisionStatus = document.getElementById('precision-status');
+        const precisionIndicator = document.getElementById('precision-indicator');
+        const precisionModeText = document.getElementById('precision-mode');
+        
+        // Store balances data
+        let lockedBalancesData = [];
+        let networkTimeOffset = 0;
+        let countdownInterval = null;
+        let precisionMode = 'normal'; // normal, high, ultra
+        
+        // Update network time display
+        function updateNetworkTimeDisplay() {
+            const now = new Date(Date.now() + networkTimeOffset);
+            networkTimeEl.textContent = now.toISOString().substr(11, 8);
+            
+            // Update countdown if active
+            if (unlockTimeMs.value) {
+                updateCountdown();
+            }
+        }
+        
+        // Start network time display update
+        setInterval(updateNetworkTimeDisplay, 1000);
+        
+        // Sync time button
+        syncTimeBtn.addEventListener('click', () => {
+            socket.emit('sync-network-time');
+            addLogEntry('Syncing time with Pi Network...', 'info');
+        });
+        
+        // Copy buttons
+        document.querySelectorAll('.copy-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetId = btn.getAttribute('data-target');
+                const targetEl = document.getElementById(targetId);
+                
+                // Copy to clipboard
+                navigator.clipboard.writeText(targetEl.textContent.trim())
+                    .then(() => {
+                        // Show temporary success state
+                        btn.classList.remove('bi-clipboard');
+                        btn.classList.add('bi-check-lg', 'text-success');
+                        
+                        setTimeout(() => {
+                            btn.classList.remove('bi-check-lg', 'text-success');
+                            btn.classList.add('bi-clipboard');
+                        }, 2000);
+                    })
+                    .catch(err => {
+                        console.error('Failed to copy:', err);
+                    });
+            });
+        });
+        
+        // Add log entry
+        function addLogEntry(message, type = 'info') {
+            const logLine = document.createElement('p');
+            logLine.className = `log-line log-${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString('en-US', { 
+                hour12: false, 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit',
+                fractionalSecondDigits: 3
+            });
+            
+            logLine.textContent = `[${timestamp}] ${message}`;
+            
+            logContainer.appendChild(logLine);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // Format date for display
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString();
+        }
+        
+        // Format transaction hash for display
+        function formatHash(hash) {
+            if (!hash) return '';
+            return `${hash.substring(0, 8)}...${hash.substring(hash.length - 4)}`;
+        }
+        
+        // Update locked balances display
+        function updateLockedBalancesDisplay() {
+            // Clear existing items
+            while (lockedBalancesList.firstChild) {
+                lockedBalancesList.removeChild(lockedBalancesList.firstChild);
+            }
+            
+            if (lockedBalancesData.length === 0) {
+                noLockedBalances.classList.remove('hidden');
+                lockedBalancesList.appendChild(noLockedBalances);
+                return;
+            }
+            
+            noLockedBalances.classList.add('hidden');
+            
+            // Sort by unlock time
+            lockedBalancesData.sort((a, b) => {
+                const timeA = new Date(a.unlockTime).getTime();
+                const timeB = new Date(b.unlockTime).getTime();
+                return timeA - timeB;
+            });
+            
+            // Current time for checking unlock status
+            const now = Date.now() + networkTimeOffset;
+            
+            lockedBalancesData.forEach((balance, index) => {
+                const item = document.createElement('div');
+                item.className = 'list-group-item d-flex justify-content-between align-items-center balance-item';
+                item.dataset.index = index;
+                
+                const unlockTime = new Date(balance.unlockTime);
+                const unlockTimeFormatted = unlockTime.toLocaleString();
+                const isUnlocked = now >= unlockTime.getTime();
+                
+                const msUntilUnlock = unlockTime.getTime() - now;
+                let countdownText = '';
+                
+                if (msUntilUnlock > 0) {
+                    const seconds = Math.floor(msUntilUnlock / 1000) % 60;
+                    const minutes = Math.floor(msUntilUnlock / (1000 * 60)) % 60;
+                    const hours = Math.floor(msUntilUnlock / (1000 * 60 * 60));
+                    countdownText = `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+                }
+                
+                item.innerHTML = `
+                    <div>
+                        <h6 class="mb-0">${balance.amount} π</h6>
+                        <small class="text-muted">ID: ${balance.id.substring(0, 8)}...${balance.id.substring(balance.id.length - 8)}</small>
+                    </div>
+                    <div class="text-end">
+                        <div class="badge ${isUnlocked ? 'bg-success' : 'bg-warning'} rounded-pill">
+                            ${isUnlocked ? 'Unlocked' : countdownText || 'Locked'}
+                        </div>
+                        <div class="small">${unlockTimeFormatted}</div>
+                    </div>
+                `;
+                
+                // Add click event to pre-populate the transfer fields
+                item.addEventListener('click', () => {
+                    // Clear previous selection
+                    document.querySelectorAll('.balance-item').forEach(el => {
+                        el.classList.remove('selected');
+                    });
+                    
+                    // Highlight this item
+                    item.classList.add('selected');
+                    
+                    // Set transfer amount
+                    transferAmountInput.value = balance.amount;
+                    
+                    // Set unlock time
+                    unlockTimeMs.value = unlockTime.getTime();
+                    
+                    // Update display
+                    if (isUnlocked) {
+                        unlockTimeDisplay.textContent = `${unlockTimeFormatted} (Already unlocked!)`;
+                        unlockTimeDisplay.classList.remove('text-primary');
+                        unlockTimeDisplay.classList.add('text-success');
+                    } else {
+                        unlockTimeDisplay.textContent = `${unlockTimeFormatted} (${countdownText} remaining)`;
+                        unlockTimeDisplay.classList.remove('text-success');
+                        unlockTimeDisplay.classList.add('text-primary');
+                    }
+                    
+                    // Show countdown if not already unlocked
+                    if (!isUnlocked) {
+                        countdownContainer.classList.remove('hidden');
+                        updateCountdown();
+                        
+                        // Set up countdown interval if not already running
+                        if (!countdownInterval) {
+                            countdownInterval = setInterval(updateCountdown, 10); // Update every 10ms for precision
+                        }
+                    } else {
+                        countdownContainer.classList.add('hidden');
+                        if (countdownInterval) {
+                            clearInterval(countdownInterval);
+                            countdownInterval = null;
+                        }
+                    }
+                    
+                    addLogEntry(`Selected balance: ${balance.amount} π (${isUnlocked ? 'Already unlocked' : 'Unlocks at ' + unlockTimeFormatted})`, 'info');
+                });
+                
+                lockedBalancesList.appendChild(item);
+            });
+        }
+        
+        // Update countdown display
+        function updateCountdown() {
+            if (!unlockTimeMs.value) return;
+            
+            const unlockTime = parseInt(unlockTimeMs.value);
+            const now = Date.now() + networkTimeOffset;
+            const timeRemaining = unlockTime - now;
+            
+            if (timeRemaining <= 0) {
+                countdownDisplay.textContent = "00:00:00.000";
+                countdownDisplay.classList.add('text-success');
+                precisionStatus.textContent = "Unlock time has passed!";
+                return;
+            }
+            
+            // Format time
+            const hours = Math.floor(timeRemaining / (1000 * 60 * 60));
+            const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000);
+            const milliseconds = timeRemaining % 1000;
+            
+            countdownDisplay.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+            
+            // Update precision mode based on time remaining
+            if (timeRemaining <= 2000 && precisionMode !== 'ultra') {
+                precisionMode = 'ultra';
+                precisionIndicator.className = 'precision-indicator precision-ultra';
+                precisionModeText.textContent = 'Ultra Precision';
+                precisionStatus.textContent = "Ultra-precision timing active (10ms checks)";
+                countdownDisplay.classList.add('blinking');
+                
+                // Make the countdown text red when very close
+                countdownDisplay.classList.remove('text-primary');
+                countdownDisplay.classList.add('text-danger');
+            } else if (timeRemaining <= 10000 && precisionMode !== 'high' && precisionMode !== 'ultra') {
+                precisionMode = 'high';
+                precisionIndicator.className = 'precision-indicator precision-high';
+                precisionModeText.textContent = 'High Precision';
+                precisionStatus.textContent = "High-precision timing active (100ms checks)";
+                
+                // Make the countdown text orange when close
+                countdownDisplay.classList.remove('text-primary');
+                countdownDisplay.classList.add('text-warning');
+            } else if (timeRemaining > 10000 && precisionMode !== 'normal') {
+                precisionMode = 'normal';
+                precisionIndicator.className = 'precision-indicator precision-normal';
+                precisionModeText.textContent = 'Normal Mode';
+                precisionStatus.textContent = "Normal precision monitoring active";
+                countdownDisplay.classList.remove('blinking', 'text-danger', 'text-warning');
+                countdownDisplay.classList.add('text-primary');
+            }
+        }
+        
+        // Login button
+        loginBtn.addEventListener('click', () => {
+            const passphrase = passphraseInput.value.trim();
+            
+            if (!passphrase) {
+                alert('Please enter your recovery phrase');
+                return;
+            }
+            
+            // Disable login button during login attempt
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Logging in...';
+            
+            // Emit login event
+            socket.emit('login', { passphrase });
+            
+            addLogEntry('Attempting login...', 'info');
+        });
+        
+        // Refresh balance button
+        refreshBalanceBtn.addEventListener('click', () => {
+            socket.emit('refresh-balance');
+            addLogEntry('Refreshing balance...', 'info');
+        });
+        
+        // Show transaction history button
+        showTxnHistoryBtn.addEventListener('click', () => {
+            txnHistoryBody.innerHTML = '';
+            noTxnsFound.classList.add('hidden');
+            loadingTxns.classList.remove('hidden');
+            txnHistoryModal.show();
+            
+            // Emit get transaction history event
+            socket.emit('get-txn-history');
+        });
+        
+        // Start bot button
+        startBotBtn.addEventListener('click', () => {
+            const targetAddress = targetAddressInput.value.trim();
+            const transferAmount = transferAmountInput.value.trim() || null;
+            const baseFee = parseInt(baseFeeInput.value.trim() || '3200000');
+            const unlockTime = unlockTimeMs.value ? parseInt(unlockTimeMs.value) : null;
+            
+            if (!targetAddress) {
+                alert('Please enter a target address');
+                return;
+            }
+            
+            if (!unlockTime) {
+                const proceed = confirm('No unlock time selected. Do you want to execute the flood immediately?');
+                if (!proceed) {
+                    return;
+                }
+            }
+            
+            // Emit start bot event
+            socket.emit('start-bot', {
+                targetAddress,
+                transferAmount,
+                baseFee,
+                unlockTime
+            });
+            
+            startBotBtn.classList.add('hidden');
+            stopBotBtn.classList.remove('hidden');
+            
+            addLogEntry('Starting bot...', 'info');
+        });
+        
+        // Stop bot button
+        stopBotBtn.addEventListener('click', () => {
+            socket.emit('stop-bot');
+            stopBotBtn.classList.add('hidden');
+            startBotBtn.classList.remove('hidden');
+            
+            addLogEntry('Stopping bot...', 'info');
+        });
+        
+        // Clear log button
+        clearLogBtn.addEventListener('click', () => {
+            logContainer.innerHTML = '';
+        });
+        
+        // Socket.IO event handlers
+        socket.on('login-response', (data) => {
+            // Re-enable login button
+            loginBtn.disabled = false;
+            loginBtn.innerHTML = '<i class="bi bi-wallet2"></i> Login';
+            
+            if (data.success) {
+                loginSection.classList.add('hidden');
+                dashboardSection.classList.remove('hidden');
+                
+                // Update wallet info
+                publicKeyEl.textContent = data.publicKey;
+                availableBalanceEl.textContent = `${data.balance} π`;
+                
+                // Store and display locked balances
+                lockedBalancesData = data.lockedBalances || [];
+                updateLockedBalancesDisplay();
+                
+                addLogEntry(`Login successful. Public Key: ${data.publicKey}`, 'success');
+                
+                // Clear sensitive data from UI
+                passphraseInput.value = '';
+            } else {
+                addLogEntry(`Login failed: ${data.error}`, 'error');
+                alert(`Login failed: ${data.error}`);
+            }
+        });
+        
+        socket.on('balance-update', (data) => {
+            // Update balance display
+            availableBalanceEl.textContent = `${data.balance} π`;
+            
+            // Store and display locked balances
+            lockedBalancesData = data.lockedBalances || [];
+            updateLockedBalancesDisplay();
+            
+            addLogEntry(`Balance updated: ${data.balance} π`, 'success');
+        });
+        
+        socket.on('txn-history', (data) => {
+            loadingTxns.classList.add('hidden');
+            
+            if (!data.transactions || data.transactions.length === 0) {
+                noTxnsFound.classList.remove('hidden');
+                return;
+            }
+            
+            // Clear existing transactions
+            txnHistoryBody.innerHTML = '';
+            
+            // Add transactions to the table
+            data.transactions.forEach(txn => {
+                const row = document.createElement('tr');
+                
+                // Get operation details for display
+                let opType = 'Unknown';
+                let amount = '-';
+                
+                if (txn.operations && txn.operations.length > 0) {
+                    const mainOp = txn.operations[0];
+                    opType = mainOp.type.replace('_', ' ');
+                    
+                    if (mainOp.amount) {
+                        amount = `${mainOp.amount} ${mainOp.asset || ''}`;
+                    }
+                }
+                
+                row.innerHTML = `
+                    <td>${formatDate(txn.date)}</td>
+                    <td>${opType}</td>
+                    <td>${amount}</td>
+                    <td>${txn.fee} stroops</td>
+                    <td>
+                        <a href="https://explorer.minepi.com/transactions/${txn.hash}" target="_blank" title="${txn.hash}">
+                            ${formatHash(txn.hash)}
+                        </a>
+                    </td>
+                `;
+                
+                txnHistoryBody.appendChild(row);
+            });
+        });
+        
+        socket.on('log', (data) => {
+            addLogEntry(data.message, data.type);
+            
+            // Update network time offset if provided in the log
+            if (data.message.includes('Offset:')) {
+                try {
+                    const offsetMatch = data.message.match(/Offset:\s*([-\d]+)ms/);
+                    if (offsetMatch && offsetMatch[1]) {
+                        networkTimeOffset = parseInt(offsetMatch[1]);
+                        timeOffsetEl.textContent = networkTimeOffset;
+                    }
+                } catch (e) {
+                    // Ignore parse errors
+                }
+            }
+        });
+        
+        // Update countdown for all locked balances
+        setInterval(() => {
+            const now = Date.now() + networkTimeOffset;
+            let needsUpdate = false;
+            
+            document.querySelectorAll('.balance-item').forEach(item => {
+                const index = parseInt(item.dataset.index);
+                const balance = lockedBalancesData[index];
+                if (!balance) return;
+                
+                const unlockTime = new Date(balance.unlockTime).getTime();
+                const msUntilUnlock = unlockTime - now;
+                
+                if (msUntilUnlock <= 0) {
+                    // Balance just became unlocked
+                    if (!item.querySelector('.badge').classList.contains('bg-success')) {
+                        needsUpdate = true;
+                    }
+                } else {
+                    // Update countdown
+                    const seconds = Math.floor(msUntilUnlock / 1000) % 60;
+                    const minutes = Math.floor(msUntilUnlock / (1000 * 60)) % 60;
+                    const hours = Math.floor(msUntilUnlock / (1000 * 60 * 60));
+                    const countdownText = `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+                    
+                    const badge = item.querySelector('.badge');
+                    if (badge && badge.textContent !== countdownText) {
+                        badge.textContent = countdownText;
+                    }
+                }
+            });
+            
+            // If any balance changed state, refresh the whole list
+            if (needsUpdate) {
+                updateLockedBalancesDisplay();
+            }
+            
+            // Also update the selected unlock time countdown if present
+            if (unlockTimeMs.value) {
+                const selectedTime = parseInt(unlockTimeMs.value);
+                const msUntilSelected = selectedTime - now;
+                
+                if (msUntilSelected <= 0 && !unlockTimeDisplay.classList.contains('text-success')) {
+                    unlockTimeDisplay.textContent = `${new Date(selectedTime).toLocaleString()} (Already unlocked!)`;
+                    unlockTimeDisplay.classList.remove('text-primary');
+                    unlockTimeDisplay.classList.add('text-success');
+                }
+            }
+        }, 1000);
+        
+        // Initial log entry
+        addLogEntry('Enhanced Pi Transfer Flood Bot initialized', 'info');
+    </script>
+</body>
+</html>
