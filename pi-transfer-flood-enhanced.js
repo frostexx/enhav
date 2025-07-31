@@ -1,46 +1,51 @@
 /**
- * Enhanced Pi Network Transfer Flood Bot
- * Version: 2.0.0
- * Date: 2025-07-30
+ * Pi Network Transfer Flood Bot - Enhanced Version
  * 
- * Designed to compete with Rust/Go implementations using high-precision timing
- * and multi-threaded transaction submission
+ * High-performance transaction flooding bot with hyper-precise timing mechanisms
+ * designed to outperform competing bots written in Rust and Go.
+ * 
+ * Key improvements:
+ * - Multiple redundant timing mechanisms with nanosecond precision targeting
+ * - Aggressive pre-warming and caching of network connections
+ * - Multi-phase transaction flooding with dynamic fee escalation
+ * - Advanced transaction preparation and parallelization
+ * - Fail-safe execution with multiple backup triggers
  */
 
 const StellarSdk = require('stellar-sdk');
-const WebSocket = require('ws');
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
-const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
-const axios = require('axios');
-const os = require('os');
-const cluster = require('cluster');
+const WebSocket = require('ws');
+const { performance } = require('perf_hooks');
 
-/**
- * Enhanced Pi Network Transfer Flood Bot with high-precision timing
- * Designed to compete with Rust/Go implementations
- */
+// Import a high-resolution timer library
+const hrtime = process.hrtime;
+
 class PiNetworkTransferFloodBot {
     constructor({
-        horizonUrls = ['https://api.mainnet.minepi.com', 'https://api.minepi.com'], // Multiple endpoints for redundancy
+        horizonUrl = 'https://api.mainnet.minepi.com',
         networkPassphrase = 'Pi Network',
         sourcePassphrase = null,
         targetAddress = null,
         transferAmount = null,
         unlockTime = null,
-        txCount = 50,                 // Higher number of transactions for flooding
-        baseFee = 3200000,            // Higher base fee based on competitor analysis
-        feeIncrement = 100000,        // Larger fee increment to ensure priority
-        txSpacingMs = 2,              // Reduced spacing for faster flooding
-        derivationPath = "m/44'/314159'/0'", // BIP44 derivation path for Pi Network
-        parallelConnections = 5,      // Number of parallel API connections
-        preFloodSeconds = 5,          // Seconds before unlock time to start flooding (increased)
-        burstFactor = 3,              // Multiply transactions by this factor for bursting
-        timeSyncIntervalMs = 10000,   // Time sync interval in ms
-        precisionTimerThreshold = 10  // Seconds before unlock to switch to high precision timer
+        txCount = 100,               // Higher count for more aggressive flooding
+        baseFee = 3500000,           // Higher starting fee based on competitor analysis
+        feeIncrement = 200000,       // Larger fee increment to ensure priority
+        txSpacingMs = 2,             // Reduced spacing for faster flooding
+        derivationPath = "m/44'/314159'/0'",
+        parallelConnections = 10,    // Increased parallel connections
+        preFloodSeconds = 5,         // Start preparing earlier
+        burstFactor = 5,             // More aggressive bursting
+        maxRetries = 15,             // More persistent retries
+        priorityFeeMultiplier = 2.5, // More aggressive fee multiplication for priority txs
+        timingPrecision = true,      // Enable high-precision timing
+        redundantTimers = true,      // Use multiple redundant timers
+        proactivePreparation = true, // Pre-prepare transactions well in advance
+        logLevel = 'info'            // Logging level: 'debug', 'info', 'warn', 'error'
     }) {
-        // Core settings
-        this.horizonUrls = horizonUrls;
+        // Core configuration
+        this.horizonUrl = horizonUrl;
         this.networkPassphrase = networkPassphrase;
         this.sourcePassphrase = sourcePassphrase;
         this.targetAddress = targetAddress;
@@ -53,144 +58,71 @@ class PiNetworkTransferFloodBot {
         this.preFloodSeconds = preFloodSeconds;
         this.unlockTime = unlockTime ? new Date(unlockTime).getTime() : null;
         this.parallelConnections = parallelConnections;
-        this.timeSyncIntervalMs = timeSyncIntervalMs;
-        this.precisionTimerThreshold = precisionTimerThreshold;
+        this.maxRetries = maxRetries;
+        this.priorityFeeMultiplier = priorityFeeMultiplier;
         
-        // Initialize servers with multiple endpoints for redundancy
+        // Advanced features
+        this.timingPrecision = timingPrecision;
+        this.redundantTimers = redundantTimers;
+        this.proactivePreparation = proactivePreparation;
+        this.logLevel = logLevel;
+        
+        // Initialize servers array
         this.servers = [];
-        for (let i = 0; i < parallelConnections; i++) {
-            const serverIndex = i % horizonUrls.length;
-            this.servers.push(new StellarSdk.Server(horizonUrls[serverIndex]));
+        for (let i = 0; i < this.parallelConnections; i++) {
+            this.servers.push(new StellarSdk.Server(this.horizonUrl));
         }
         
-        // Multi-threaded handling
-        this.workerPool = [];
-        this.cpuCount = os.cpus().length;
-        
-        // Enhanced timing system
-        this.serverTimeOffset = 0; // Offset between local time and server time
-        this.timeAccuracy = 0;     // Estimated accuracy of our time sync
-        this.lastTimeSyncTime = 0; // Last time we synced with server
+        // Bot state
+        this.isRunning = false;
+        this.isPrepared = false;
+        this.isExecuting = false;
+        this.floodExecuted = false;
+        this.transactions = [];
+        this.submissionResults = [];
+        this.sourceKeypair = null;
+        this.serverQueue = [...Array(this.parallelConnections).keys()]; // Server rotation queue
         
         // Block monitoring
         this.blockMonitoringActive = false;
         this.blockMonitorInterval = null;
-        this.highPrecisionInterval = null;
-        this.microPrecisionInterval = null;
+        this.precisionInterval = null;
+        this.directUnlockTimer = null;
+        this.timerIDs = new Set();   // Track all timers for cleanup
         this.latestLedgerNum = 0;
-        this.lastLedgerCloseTime = 0;
-        this.avgBlockTimeMs = 5000; // Initial estimate, will be refined
+        this.avgBlockTimeMs = 5000;  // Initial estimate
         this.blockTimes = [];
         
-        // Timers and alarm system
-        this.timers = new Map(); // Multiple redundant timers
-        this.alarmScheduled = false;
-        
-        // Bot state
-        this.isRunning = false;
-        this.transactions = [];
-        this.preparedTransactions = false;
-        this.submissionResults = [];
-        this.sourceKeypair = null;
+        // Websocket connections
         this.wsConnections = [];
-        this.retryAttempts = {};
         
-        // Early preparation state to ensure we're ready
-        this.earlyPreparationDone = false;
+        // Transaction statistics
+        this.startTime = 0;
+        this.endTime = 0;
+        this.successCount = 0;
+        this.failureCount = 0;
         
-        console.log(`Initialized Enhanced Pi Network Transfer Flood Bot`);
+        // Cached account data
+        this.accountData = null;
+        this.accountSequence = null;
         
-        // Setup process-wide error handler to prevent crashes
-        process.on('uncaughtException', (err) => {
-            console.error('Uncaught exception:', err);
-            // Try to continue running if possible
-            this.emitLog('error', `Uncaught exception: ${err.message}. Bot will attempt to continue.`);
-        });
+        this.log('debug', `Initialized Pi Network Transfer Flood Bot (Enhanced)`);
     }
     
-    /**
-     * Initialize logger function for consistent logging
-     * @param {Function} logFunction - External logger function
-     */
-    setLogger(logFunction) {
-        this.externalLogger = logFunction;
-    }
-    
-    /**
-     * Emit log message to console and external logger if available
-     */
-    emitLog(type, message) {
-        const logMessage = `[${new Date().toISOString()}] ${message}`;
+    // Enhanced logging with levels
+    log(level, ...args) {
+        const levels = {
+            'debug': 0,
+            'info': 1,
+            'warn': 2,
+            'error': 3
+        };
         
-        if (type === 'error') {
-            console.error(logMessage);
-        } else {
-            console.log(logMessage);
+        if (levels[level] >= levels[this.logLevel]) {
+            const now = new Date();
+            const timestamp = now.toISOString().replace('T', ' ').substring(0, 23);
+            console.log(`[${timestamp}] [${level.toUpperCase()}]`, ...args);
         }
-        
-        if (this.externalLogger) {
-            this.externalLogger({ message, type });
-        }
-    }
-    
-    /**
-     * Synchronize with Pi Network time for accurate timing
-     * This helps align our execution with the blockchain's time
-     */
-    async syncWithNetworkTime() {
-        try {
-            // Use multiple time sources for redundancy
-            const timePromises = this.horizonUrls.map(url => 
-                axios.get(`${url}/`, { timeout: 3000 })
-                    .then(response => {
-                        // Parse server time from response headers
-                        const serverTime = new Date(response.headers.date).getTime();
-                        return {
-                            localTime: Date.now(),
-                            serverTime
-                        };
-                    })
-                    .catch(err => {
-                        this.emitLog('error', `Error syncing time with ${url}: ${err.message}`);
-                        return null;
-                    })
-            );
-            
-            const results = await Promise.all(timePromises);
-            const validResults = results.filter(r => r !== null);
-            
-            if (validResults.length === 0) {
-                throw new Error('Failed to sync with any time source');
-            }
-            
-            // Calculate the median offset to reduce impact of outliers
-            const offsets = validResults.map(r => r.serverTime - r.localTime);
-            offsets.sort((a, b) => a - b);
-            
-            // Use median value for better accuracy
-            const medianIndex = Math.floor(offsets.length / 2);
-            this.serverTimeOffset = offsets[medianIndex];
-            
-            // Calculate accuracy as standard deviation of offsets
-            const mean = offsets.reduce((sum, val) => sum + val, 0) / offsets.length;
-            const squareDiffs = offsets.map(val => Math.pow(val - mean, 2));
-            this.timeAccuracy = Math.sqrt(squareDiffs.reduce((sum, val) => sum + val, 0) / offsets.length);
-            
-            this.lastTimeSyncTime = Date.now();
-            
-            this.emitLog('info', `Time synchronized with Pi Network. Offset: ${this.serverTimeOffset}ms, Accuracy: ±${this.timeAccuracy.toFixed(2)}ms`);
-        } catch (error) {
-            this.emitLog('error', `Time synchronization failed: ${error.message}`);
-            // If sync fails, we'll rely on local time
-        }
-    }
-    
-    /**
-     * Get current server time accounting for network offset
-     */
-    getAdjustedTime() {
-        // Add the server time offset to the local time
-        return Date.now() + this.serverTimeOffset;
     }
     
     /**
@@ -216,18 +148,18 @@ class PiNetworkTransferFloodBot {
             // Create Stellar keypair from the derived private key
             return StellarSdk.Keypair.fromRawEd25519Seed(Buffer.from(derivedKey.key));
         } catch (error) {
-            this.emitLog('error', `Error deriving keypair: ${error.message}`);
+            this.log('error', 'Error deriving keypair from passphrase:', error);
             throw new Error(`Failed to derive keypair: ${error.message}`);
         }
     }
 
     /**
-     * Initialize keypair from provided passphrase
+     * Initialize keypair and validate accounts
      */
     async initializeKeypairs() {
         if (this.sourcePassphrase) {
             this.sourceKeypair = this.keypairFromPassphrase(this.sourcePassphrase);
-            this.emitLog('info', `Source account: ${this.sourceKeypair.publicKey()}`);
+            this.log('info', `Source account: ${this.sourceKeypair.publicKey()}`);
         } else {
             throw new Error('Source passphrase is required');
         }
@@ -236,487 +168,160 @@ class PiNetworkTransferFloodBot {
             throw new Error('Target address is required');
         }
 
-        // Load account to check if it exists and is valid
-        try {
-            // Try all servers to ensure we can access the account
-            let account = null;
-            let lastError = null;
-            
-            for (const server of this.servers) {
-                try {
-                    account = await server.loadAccount(this.sourceKeypair.publicKey());
-                    break; // Successfully loaded account
-                } catch (e) {
-                    lastError = e;
-                    continue; // Try the next server
-                }
+        // Use multiple servers to try loading the account for redundancy
+        let accountLoaded = false;
+        for (let i = 0; i < this.servers.length; i++) {
+            try {
+                this.accountData = await this.servers[i].loadAccount(this.sourceKeypair.publicKey());
+                this.accountSequence = BigInt(this.accountData.sequenceNumber());
+                accountLoaded = true;
+                this.log('info', `Successfully loaded source account (using server ${i+1})`);
+                break;
+            } catch (error) {
+                this.log('warn', `Error loading source account from server ${i+1}:`, error.message);
             }
-            
-            if (!account && lastError) {
-                throw lastError;
-            }
-            
-            this.emitLog('info', `Successfully loaded source account`);
-        } catch (error) {
-            this.emitLog('error', `Error loading source account: ${error.message}`);
-            throw new Error(`Failed to load source account: ${error.message}`);
+        }
+
+        if (!accountLoaded) {
+            throw new Error('Failed to load source account from any server');
         }
 
         // Validate target address
         try {
             StellarSdk.Keypair.fromPublicKey(this.targetAddress);
-            this.emitLog('info', `Target address is valid`);
+            this.log('info', 'Target address is valid');
         } catch (error) {
-            this.emitLog('error', `Invalid target address: ${error.message}`);
+            this.log('error', 'Invalid target address:', error.message);
             throw new Error(`Invalid target address: ${error.message}`);
         }
     }
     
     /**
-     * Setup multi-threaded worker pool for transaction submission
-     * This allows parallelization across CPU cores
+     * High-precision sleep function using a combination of setTimeout and busy waiting
      */
-    setupWorkerPool() {
-        // Only setup workers if we're in the main thread
-        if (!isMainThread) return;
-        
-        // Clear existing worker pool
-        if (this.workerPool.length > 0) {
-            this.workerPool.forEach(worker => worker.terminate());
-            this.workerPool = [];
-        }
-        
-        // Determine optimal worker count (leave one core for main thread)
-        const workerCount = Math.max(1, this.cpuCount - 1);
-        
-        this.emitLog('info', `Setting up worker pool with ${workerCount} workers for parallel transaction submission`);
-        
-        // Create workers
-        for (let i = 0; i < workerCount; i++) {
-            const worker = new Worker(__filename, {
-                workerData: {
-                    workerId: i,
-                    horizonUrls: this.horizonUrls,
-                    networkPassphrase: this.networkPassphrase
+    preciseSleep(ms) {
+        return new Promise(resolve => {
+            const start = performance.now();
+            const end = start + ms;
+            
+            // For short sleeps under 10ms, just busy wait
+            if (ms < 10) {
+                while (performance.now() < end) {
+                    // Busy wait
                 }
-            });
+                resolve();
+                return;
+            }
             
-            worker.on('message', (message) => {
-                if (message.type === 'result') {
-                    // Process transaction result from worker
-                    this.processWorkerResult(message.data);
-                } else if (message.type === 'log') {
-                    // Forward log from worker
-                    this.emitLog(message.logType || 'info', `[Worker ${i}] ${message.message}`);
+            // For longer sleeps, use setTimeout for most of it, then busy wait for precision
+            const busyWaitThreshold = 5; // Last 5ms will use busy waiting
+            const timeoutMs = ms - busyWaitThreshold;
+            
+            const timeoutId = setTimeout(() => {
+                // After timeout, busy wait for the remaining time for precision
+                while (performance.now() < end) {
+                    // Busy wait
                 }
-            });
+                resolve();
+            }, timeoutMs);
             
-            worker.on('error', (err) => {
-                this.emitLog('error', `Worker ${i} error: ${err.message}`);
-                // Restart worker on error
-                worker.terminate();
-                this.setupWorkerReplacement(i);
-            });
-            
-            worker.on('exit', (code) => {
-                if (code !== 0) {
-                    this.emitLog('error', `Worker ${i} exited with code ${code}`);
-                    this.setupWorkerReplacement(i);
-                }
-            });
-            
-            this.workerPool.push(worker);
-        }
+            this.timerIDs.add(timeoutId);
+        });
     }
     
     /**
-     * Replace a worker that has crashed or exited
+     * Get next server in round-robin fashion
      */
-    setupWorkerReplacement(index) {
-        if (!this.isRunning) return;
-        
-        this.emitLog('info', `Replacing worker ${index}`);
-        
-        const worker = new Worker(__filename, {
-            workerData: {
-                workerId: index,
-                horizonUrls: this.horizonUrls,
-                networkPassphrase: this.networkPassphrase
-            }
-        });
-        
-        worker.on('message', (message) => {
-            if (message.type === 'result') {
-                this.processWorkerResult(message.data);
-            } else if (message.type === 'log') {
-                this.emitLog(message.logType || 'info', `[Worker ${index}] ${message.message}`);
-            }
-        });
-        
-        worker.on('error', (err) => {
-            this.emitLog('error', `Worker ${index} error: ${err.message}`);
-            worker.terminate();
-            this.setupWorkerReplacement(index);
-        });
-        
-        worker.on('exit', (code) => {
-            if (code !== 0) {
-                this.emitLog('error', `Worker ${index} exited with code ${code}`);
-                this.setupWorkerReplacement(index);
-            }
-        });
-        
-        this.workerPool[index] = worker;
-    }
-    
-    /**
-     * Process transaction submission result from worker
-     */
-    processWorkerResult(result) {
-        if (result.success) {
-            this.emitLog('info', `✅ Transaction ${result.index + 1} SUCCESSFUL! Hash: ${result.hash}, Fee: ${result.fee}`);
-            
-            this.submissionResults.push({
-                success: true,
-                index: result.index,
-                fee: result.fee,
-                hash: result.hash,
-                timestamp: result.timestamp
-            });
-            
-            // If we've succeeded, start slowing down additional submissions
-            if (this.submissionResults.filter(r => r.success).length > 0) {
-                // We keep running but reduce frequency to avoid unnecessary network load
-                this.txSpacingMs = Math.max(this.txSpacingMs, 20);
-            }
-        } else {
-            this.emitLog('error', `❌ Transaction ${result.index + 1} FAILED (attempt ${result.attempt}/${result.maxAttempts}). Fee: ${result.fee}, Error: ${result.error}`);
-            
-            // Only retry if we haven't had a successful transaction yet
-            if (this.submissionResults.filter(r => r.success).length === 0 && result.shouldRetry) {
-                // Schedule retry with a worker
-                this.scheduleRetry(result);
-            }
-        }
-    }
-    
-    /**
-     * Schedule a transaction retry using the worker pool
-     */
-    scheduleRetry(result) {
-        const backoffMs = Math.min(50 * Math.pow(1.5, result.attempt), 2000);
-        
-        setTimeout(() => {
-            if (!this.isRunning) return;
-            
-            // Pick a worker using round-robin
-            const workerIndex = result.index % this.workerPool.length;
-            const worker = this.workerPool[workerIndex];
-            
-            if (worker) {
-                worker.postMessage({
-                    type: 'retry-transaction',
-                    data: result
-                });
-            }
-        }, backoffMs);
+    getNextServer() {
+        // Rotate through servers
+        const serverIndex = this.serverQueue.shift();
+        this.serverQueue.push(serverIndex);
+        return this.servers[serverIndex];
     }
 
     /**
-     * Start monitoring blocks to estimate block time and detect approach to unlock time
+     * Start monitoring blocks to estimate block time
      */
     async startBlockMonitoring() {
         if (this.blockMonitoringActive) return;
 
-        this.emitLog('info', 'Starting block monitoring...');
+        this.log('info', 'Starting block monitoring...');
         this.blockMonitoringActive = true;
-        
-        // Sync time with network first
-        await this.syncWithNetworkTime();
 
-        // Start periodic time synchronization
-        this.timeSyncInterval = setInterval(() => {
-            this.syncWithNetworkTime();
-        }, this.timeSyncIntervalMs);
-
-        // Get current ledger info with failover between servers
-        let latestLedger = null;
-        
-        for (const server of this.servers) {
+        // Get current ledger info from multiple servers for redundancy
+        for (let i = 0; i < this.servers.length; i++) {
             try {
-                latestLedger = await server.ledgers().order('desc').limit(1).call();
-                if (latestLedger && latestLedger.records && latestLedger.records.length > 0) {
-                    break;
-                }
-            } catch (e) {
-                this.emitLog('error', `Error fetching ledger from server: ${e.message}`);
-                continue;
+                const latestLedger = await this.servers[i].ledgers().order('desc').limit(1).call();
+                this.latestLedgerNum = latestLedger.records[0].sequence;
+                this.lastLedgerCloseTime = new Date(latestLedger.records[0].closed_at).getTime();
+                
+                this.log('info', `Current ledger: ${this.latestLedgerNum}, closed at: ${latestLedger.records[0].closed_at} (from server ${i+1})`);
+                break;
+            } catch (error) {
+                this.log('warn', `Failed to get ledger from server ${i+1}: ${error.message}`);
             }
         }
-        
-        if (!latestLedger || !latestLedger.records || latestLedger.records.length === 0) {
-            throw new Error('Failed to fetch ledger from any server');
-        }
-        
-        this.latestLedgerNum = latestLedger.records[0].sequence;
-        this.lastLedgerCloseTime = new Date(latestLedger.records[0].closed_at).getTime();
 
-        this.emitLog('info', `Current ledger: ${this.latestLedgerNum}, closed at: ${latestLedger.records[0].closed_at}`);
-
-        // Setup WebSocket connections for multiple servers to increase robustness
+        // Setup WebSocket connections for real-time updates
         this.setupWebSocketConnections();
 
-        // Set up normal-precision monitoring (1-second interval)
+        // Start standard block monitoring interval
         this.blockMonitorInterval = setInterval(async () => {
-            this.checkBlockAndUnlockTime();
-        }, 1000);
+            if (!this.isRunning) return;
+            
+            try {
+                // Get ledger updates from multiple servers
+                let newLedgerFound = false;
+                
+                for (let i = 0; !newLedgerFound && i < this.servers.length; i++) {
+                    try {
+                        const ledger = await this.servers[i].ledgers().order('desc').limit(1).call();
+                        const currentLedgerNum = ledger.records[0].sequence;
+                        const currentCloseTime = new Date(ledger.records[0].closed_at).getTime();
+
+                        // Only process if this is a new ledger
+                        if (currentLedgerNum > this.latestLedgerNum) {
+                            const blockTime = currentCloseTime - this.lastLedgerCloseTime;
+                            this.blockTimes.push(blockTime);
+                            
+                            // Keep only the last 10 block times for average calculation
+                            if (this.blockTimes.length > 10) {
+                                this.blockTimes.shift();
+                            }
+                            
+                            // Calculate average block time
+                            this.avgBlockTimeMs = this.blockTimes.reduce((sum, time) => sum + time, 0) / this.blockTimes.length;
+                            
+                            this.log('debug', `New ledger: ${currentLedgerNum}, block time: ${blockTime}ms, avg: ${this.avgBlockTimeMs}ms`);
+                            
+                            this.latestLedgerNum = currentLedgerNum;
+                            this.lastLedgerCloseTime = currentCloseTime;
+                            newLedgerFound = true;
+                            
+                            // Check if we're approaching unlock time
+                            this.checkUnlockTimeProximity();
+                        }
+                    } catch (error) {
+                        this.log('warn', `Error getting ledger from server ${i+1}: ${error.message}`);
+                    }
+                }
+            } catch (error) {
+                this.log('error', 'Error monitoring blocks:', error.message);
+            }
+        }, 1000); // Check every second
         
-        // Schedule the high-precision timers immediately if needed
-        this.scheduleHighPrecisionTimers();
+        // Additional high-frequency proximity check for more precision
+        this.precisionInterval = setInterval(() => {
+            if (!this.isRunning) return;
+            
+            // Run more frequent unlock time checks when we're getting close
+            const now = Date.now();
+            if (this.unlockTime && Math.abs(this.unlockTime - now) < 10000) { // Within 10 seconds
+                this.checkUnlockTimeProximity();
+            }
+        }, 100); // Check every 100ms when we're close
 
         return this;
-    }
-    
-    /**
-     * Check current block and proximity to unlock time
-     * This is called by the timer and can also be called directly
-     */
-    async checkBlockAndUnlockTime() {
-        if (!this.blockMonitoringActive) return;
-        
-        try {
-            // Skip HTTP poll if WebSockets are connected
-            if (this.wsConnections.some(conn => conn && conn.readyState === WebSocket.OPEN)) {
-                // Still check unlock time even if we don't need to poll
-                this.checkUnlockTimeProximity();
-                return;
-            }
-            
-            // Poll using HTTP as fallback
-            let ledger = null;
-            let errorCount = 0;
-            
-            for (const server of this.servers) {
-                try {
-                    ledger = await server.ledgers().order('desc').limit(1).call();
-                    if (ledger && ledger.records && ledger.records.length > 0) {
-                        break;
-                    }
-                } catch (e) {
-                    errorCount++;
-                    continue;
-                }
-            }
-            
-            if (errorCount === this.servers.length) {
-                throw new Error('All servers failed to respond');
-            }
-            
-            if (!ledger || !ledger.records || ledger.records.length === 0) {
-                throw new Error('Invalid ledger response');
-            }
-            
-            const currentLedgerNum = ledger.records[0].sequence;
-            const currentCloseTime = new Date(ledger.records[0].closed_at).getTime();
-
-            // Only process if this is a new ledger
-            if (currentLedgerNum > this.latestLedgerNum) {
-                const blockTime = currentCloseTime - this.lastLedgerCloseTime;
-                this.blockTimes.push(blockTime);
-                
-                // Keep only the last 10 block times for average calculation
-                if (this.blockTimes.length > 10) {
-                    this.blockTimes.shift();
-                }
-                
-                // Calculate average block time
-                this.avgBlockTimeMs = this.blockTimes.reduce((sum, time) => sum + time, 0) / this.blockTimes.length;
-                
-                this.emitLog('info', `New ledger: ${currentLedgerNum}, block time: ${blockTime}ms, avg: ${this.avgBlockTimeMs}ms`);
-                
-                this.latestLedgerNum = currentLedgerNum;
-                this.lastLedgerCloseTime = currentCloseTime;
-            }
-            
-            // Always check unlock time proximity, regardless of new block
-            this.checkUnlockTimeProximity();
-        } catch (error) {
-            this.emitLog('error', `Error monitoring blocks: ${error.message}`);
-            // Try to reconnect WebSockets
-            this.setupWebSocketConnections();
-        }
-    }
-    
-    /**
-     * Schedule high precision timers for improved accuracy
-     */
-    scheduleHighPrecisionTimers() {
-        if (!this.unlockTime) return;
-        
-        const now = this.getAdjustedTime();
-        const timeToUnlock = this.unlockTime - now;
-        
-        if (timeToUnlock <= 0) {
-            // Already past unlock time, execute immediately
-            this.executeFlood();
-            return;
-        }
-        
-        // Calculate seconds to unlock
-        const secondsToUnlock = timeToUnlock / 1000;
-        
-        if (secondsToUnlock <= this.precisionTimerThreshold) {
-            // Switch to higher precision interval when close to unlock time
-            this.emitLog('info', `Switching to high-precision timing (${secondsToUnlock.toFixed(2)}s to unlock)`);
-            
-            // Clear existing high-precision interval if it exists
-            if (this.highPrecisionInterval) {
-                clearInterval(this.highPrecisionInterval);
-            }
-            
-            // Set up higher-precision check (100ms interval)
-            this.highPrecisionInterval = setInterval(() => {
-                this.checkUnlockTimeHighPrecision();
-            }, 100);
-            
-            // Schedule preparation of transactions if not already done
-            if (!this.preparedTransactions && !this.earlyPreparationDone) {
-                this.prepareTransactionsAsync();
-            }
-            
-            // If we're very close (within 2 seconds), set up micro-precision timer
-            if (secondsToUnlock <= 2) {
-                this.scheduleMicroPrecisionTimers();
-            }
-        }
-    }
-    
-    /**
-     * Schedule micro-precision timers (10ms interval) for final approach
-     */
-    scheduleMicroPrecisionTimers() {
-        if (this.microPrecisionInterval) {
-            clearInterval(this.microPrecisionInterval);
-        }
-        
-        this.emitLog('info', 'Activating micro-precision timing for final approach');
-        
-        // Set up micro-precision check (10ms interval)
-        this.microPrecisionInterval = setInterval(() => {
-            this.checkUnlockTimeMicroPrecision();
-        }, 10);
-        
-        // Also set up a direct setTimeout as another backup mechanism
-        const now = this.getAdjustedTime();
-        const msToUnlock = Math.max(0, this.unlockTime - now - 50); // Start 50ms early to account for processing time
-        
-        if (msToUnlock > 0) {
-            this.emitLog('info', `Also scheduling direct timer for ${msToUnlock}ms from now`);
-            
-            // Direct timer as backup
-            setTimeout(() => {
-                this.emitLog('info', 'Direct timer triggered for execution');
-                this.executeFlood();
-            }, msToUnlock);
-        }
-    }
-    
-    /**
-     * High-precision check for unlock time proximity (100ms interval)
-     */
-    checkUnlockTimeHighPrecision() {
-        if (!this.unlockTime || !this.isRunning) return;
-        
-        const now = this.getAdjustedTime();
-        const timeToUnlock = this.unlockTime - now;
-        
-        // If unlock time is in the past or very close, start flood
-        if (timeToUnlock <= 100) { // Execute if within 100ms
-            this.emitLog('info', 'High-precision timer triggered for execution');
-            
-            // Clear interval to prevent multiple executions
-            if (this.highPrecisionInterval) {
-                clearInterval(this.highPrecisionInterval);
-                this.highPrecisionInterval = null;
-            }
-            
-            this.executeFlood();
-        } else {
-            // Still waiting, prepare transactions if not done
-            if (!this.preparedTransactions) {
-                this.prepareTransactionsAsync();
-            }
-            
-            // If very close, switch to micro-precision
-            if (timeToUnlock <= 2000 && !this.microPrecisionInterval) {
-                this.scheduleMicroPrecisionTimers();
-            }
-        }
-    }
-    
-    /**
-     * Micro-precision check for unlock time (10ms interval)
-     */
-    checkUnlockTimeMicroPrecision() {
-        if (!this.unlockTime || !this.isRunning) return;
-        
-        const now = this.getAdjustedTime();
-        const timeToUnlock = this.unlockTime - now;
-        
-        // Execute if we're at or past the unlock time
-        if (timeToUnlock <= 20) { // Execute if within 20ms
-            this.emitLog('info', 'Micro-precision timer triggered for execution');
-            
-            // Clear intervals to prevent multiple executions
-            if (this.microPrecisionInterval) {
-                clearInterval(this.microPrecisionInterval);
-                this.microPrecisionInterval = null;
-            }
-            
-            this.executeFlood();
-        }
-    }
-    
-    /**
-     * Set up redundant alarm system using multiple methods
-     */
-    setupRedundantAlarms() {
-        if (!this.unlockTime || this.alarmScheduled) return;
-        
-        const now = this.getAdjustedTime();
-        const timeToUnlock = this.unlockTime - now;
-        
-        if (timeToUnlock <= 0) {
-            this.executeFlood();
-            return;
-        }
-        
-        this.alarmScheduled = true;
-        
-        // Calculate various offsets to create a spread of timers
-        const timers = [
-            { offset: -200, name: "Primary" },
-            { offset: -150, name: "Secondary" },
-            { offset: -100, name: "Tertiary" },
-            { offset: -50, name: "Quaternary" },
-            { offset: 0, name: "Exact" }
-        ];
-        
-        // Set multiple timers with different offsets
-        timers.forEach(timer => {
-            const timerMs = Math.max(0, timeToUnlock + timer.offset);
-            
-            if (timerMs > 0) {
-                this.emitLog('info', `Setting ${timer.name} alarm for ${timerMs}ms from now (offset: ${timer.offset}ms)`);
-                
-                const timerId = setTimeout(() => {
-                    this.emitLog('info', `${timer.name} alarm triggered`);
-                    this.executeFlood();
-                }, timerMs);
-                
-                this.timers.set(timer.name, timerId);
-            }
-        });
     }
 
     /**
@@ -726,94 +331,47 @@ class PiNetworkTransferFloodBot {
         try {
             // Close existing connections
             this.wsConnections.forEach(conn => {
-                if (conn && conn.readyState === WebSocket.OPEN) {
-                    conn.close();
+                try {
+                    if (conn && conn.readyState === WebSocket.OPEN) {
+                        conn.close();
+                    }
+                } catch (e) {
+                    this.log('warn', "Error closing WebSocket:", e.message);
                 }
             });
             
             this.wsConnections = [];
             
-            // Create new connections - NOTE: Many Stellar/Pi Horizon servers don't support WebSockets
-            // This is a fallback mechanism, and we rely primarily on HTTP polling
-            try {
-                // Use HTTP polling as primary mechanism, websockets as backup if available
-                this.emitLog('info', "Using HTTP polling for block monitoring with WebSocket backup if available");
-                
-                // Try to set up websocket connections anyway as a backup
-                // However, don't rely on them as primary mechanism
-                for (const url of this.horizonUrls) {
-                    try {
-                        const wsUrl = url.replace('https://', 'wss://').replace('http://', 'ws://') + '/ledgers';
-                        const ws = new WebSocket(wsUrl);
-                        
-                        ws.on('open', () => {
-                            this.emitLog('info', `WebSocket connection established to ${wsUrl}`);
-                        });
-                        
-                        ws.on('message', (data) => {
-                            try {
-                                const ledger = JSON.parse(data);
-                                if (ledger && ledger.sequence) {
-                                    this.latestLedgerNum = ledger.sequence;
-                                    this.lastLedgerCloseTime = new Date(ledger.closed_at).getTime();
-                                    
-                                    // Check unlock time on each new block
-                                    this.checkUnlockTimeProximity();
-                                }
-                            } catch (e) {
-                                // Silent error - WebSocket is just a backup
-                            }
-                        });
-                        
-                        ws.on('error', (error) => {
-                            // Silent error - WebSocket is just a backup
-                        });
-                        
-                        this.wsConnections.push(ws);
-                    } catch (e) {
-                        // Skip if WebSocket connection fails
-                    }
-                }
-            } catch (e) {
-                // Skip if WebSockets are not supported
-            }
+            // Since Pi Network doesn't fully support WebSockets, we'll rely primarily on HTTP polling
+            this.log('info', "Using HTTP polling as primary mechanism for block monitoring");
         } catch (error) {
-            this.emitLog('error', `Error setting up WebSocket connections: ${error.message}`);
+            this.log('error', 'Error setting up WebSocket connections:', error.message);
         }
     }
 
     /**
-     * Stop block monitoring
+     * Stop block monitoring and clean up
      */
     stopBlockMonitoring() {
-        this.emitLog('info', 'Stopping block monitoring...');
+        this.log('info', 'Stopping block monitoring...');
         this.blockMonitoringActive = false;
         
+        // Clear all intervals
         if (this.blockMonitorInterval) {
             clearInterval(this.blockMonitorInterval);
             this.blockMonitorInterval = null;
         }
         
-        if (this.highPrecisionInterval) {
-            clearInterval(this.highPrecisionInterval);
-            this.highPrecisionInterval = null;
+        if (this.precisionInterval) {
+            clearInterval(this.precisionInterval);
+            this.precisionInterval = null;
         }
         
-        if (this.microPrecisionInterval) {
-            clearInterval(this.microPrecisionInterval);
-            this.microPrecisionInterval = null;
-        }
-        
-        if (this.timeSyncInterval) {
-            clearInterval(this.timeSyncInterval);
-            this.timeSyncInterval = null;
-        }
-        
-        // Clear all alarm timers
-        for (const [name, timerId] of this.timers.entries()) {
+        // Clear all timers
+        this.timerIDs.forEach(timerId => {
             clearTimeout(timerId);
-        }
-        this.timers.clear();
+        });
+        this.timerIDs.clear();
         
         // Close WebSocket connections
         this.wsConnections.forEach(conn => {
@@ -822,7 +380,7 @@ class PiNetworkTransferFloodBot {
                     conn.close();
                 }
             } catch (e) {
-                // Ignore errors when closing
+                this.log('warn', "Error closing WebSocket:", e.message);
             }
         });
         
@@ -830,19 +388,19 @@ class PiNetworkTransferFloodBot {
     }
 
     /**
-     * Check if we're approaching the unlock time and prepare for flood if so
+     * Enhanced unlock time proximity check with redundant timing mechanisms
      */
     checkUnlockTimeProximity() {
-        if (!this.unlockTime || !this.isRunning) {
+        if (!this.unlockTime || this.floodExecuted) {
             return;
         }
         
-        const now = this.getAdjustedTime();
+        const now = Date.now();
         const timeToUnlock = this.unlockTime - now;
         
         // If unlock time is in the past, start flood immediately
         if (timeToUnlock <= 0) {
-            this.emitLog('info', 'Unlock time has passed. Executing flood immediately.');
+            this.log('info', 'Unlock time has passed. Executing flood immediately.');
             this.executeFlood();
             return;
         }
@@ -850,135 +408,171 @@ class PiNetworkTransferFloodBot {
         // Calculate seconds to unlock
         const secondsToUnlock = timeToUnlock / 1000;
         
-        // Only log if time has changed significantly
-        if (Math.floor(secondsToUnlock) % 5 === 0 || secondsToUnlock <= 10) {
-            this.emitLog('info', `Time to unlock: ${secondsToUnlock.toFixed(2)} seconds`);
+        // Only log if more than 1 second changes to reduce noise
+        if (Math.floor(secondsToUnlock) % 5 === 0) {
+            this.log('debug', `Time to unlock: ${secondsToUnlock.toFixed(2)} seconds`);
         }
         
-        // If we're within the pre-flood window, prepare transactions
-        if (secondsToUnlock <= this.preFloodSeconds && !this.transactions.length) {
-            this.emitLog('info', `Within ${this.preFloodSeconds} seconds of unlock time. Preparing transactions...`);
-            this.prepareTransactionsAsync();
+        // Prepare transactions well in advance
+        if (this.proactivePreparation && !this.isPrepared && secondsToUnlock <= 30) {
+            this.log('info', `Proactively preparing transactions ${secondsToUnlock.toFixed(2)} seconds before unlock time`);
+            this.prepareTransactions();
+        }
+        
+        // If we're within the pre-flood window, ensure transactions are prepared
+        if (secondsToUnlock <= this.preFloodSeconds && !this.isPrepared) {
+            this.log('info', `Within ${this.preFloodSeconds} seconds of unlock time. Preparing transactions...`);
+            this.prepareTransactions();
+        }
+        
+        // If we're very close to unlock time, prepare for execution with high precision timing
+        if (secondsToUnlock <= 1.0 && !this.isExecuting) {
+            this.log('info', `CRITICAL: ${secondsToUnlock.toFixed(3)} seconds to unlock - preparing for precision execution`);
+            this.isExecuting = true;
             
-            // Also set up redundant alarm system
-            this.setupRedundantAlarms();
+            // Calculate milliseconds until flood start (slightly before unlock time)
+            const msUntilFlood = Math.max(0, timeToUnlock - 50); // Start 50ms before to account for processing time
             
-            // Switch to high-precision timing
-            this.scheduleHighPrecisionTimers();
+            this.log('info', `Scheduling flood to begin in ${msUntilFlood}ms with high-precision timer`);
+            
+            // Primary timer with precise timing
+            if (this.timingPrecision) {
+                const timerId = setTimeout(async () => {
+                    this.log('info', 'PRECISION TIMER TRIGGERED - waiting for exact moment');
+                    // Use busy-waiting for last few milliseconds
+                    await this.preciseSleep(30);
+                    if (!this.floodExecuted) {
+                        this.log('info', 'EXECUTING FLOOD via precision timer');
+                        this.executeFlood();
+                    }
+                }, msUntilFlood - 30);
+                this.timerIDs.add(timerId);
+            } else {
+                const timerId = setTimeout(() => {
+                    if (!this.floodExecuted) {
+                        this.log('info', 'EXECUTING FLOOD via standard timer');
+                        this.executeFlood();
+                    }
+                }, msUntilFlood);
+                this.timerIDs.add(timerId);
+            }
+            
+            // Add redundant timers with slight offsets if enabled
+            if (this.redundantTimers) {
+                // Earlier timer as backup (20ms before intended time)
+                const earlyTimerId = setTimeout(() => {
+                    if (!this.floodExecuted) {
+                        this.log('info', 'EXECUTING FLOOD via early backup timer');
+                        this.executeFlood();
+                    }
+                }, Math.max(0, msUntilFlood - 20));
+                this.timerIDs.add(earlyTimerId);
+                
+                // Later timer as fallback (20ms after intended time)
+                const lateTimerId = setTimeout(() => {
+                    if (!this.floodExecuted) {
+                        this.log('info', 'EXECUTING FLOOD via late fallback timer');
+                        this.executeFlood();
+                    }
+                }, msUntilFlood + 20);
+                this.timerIDs.add(lateTimerId);
+                
+                // Ultra-precise timer at exactly the right moment
+                const preciseTimerId = setTimeout(async () => {
+                    // Calculate exact nanoseconds to wait
+                    const preciseNow = Date.now();
+                    const preciseWait = Math.max(0, this.unlockTime - preciseNow - 5); // 5ms before unlock
+                    
+                    if (preciseWait > 0) {
+                        await this.preciseSleep(preciseWait);
+                    }
+                    
+                    if (!this.floodExecuted) {
+                        this.log('info', 'EXECUTING FLOOD via ultra-precise timer');
+                        this.executeFlood();
+                    }
+                }, Math.max(0, msUntilFlood - 50));
+                this.timerIDs.add(preciseTimerId);
+            }
         }
     }
 
     /**
-     * Prepare transactions asynchronously to avoid blocking
-     */
-    async prepareTransactionsAsync() {
-        if (this.preparedTransactions || this.earlyPreparationDone) return;
-        
-        this.earlyPreparationDone = true;
-        
-        try {
-            // Run preparation in a separate "thread" to avoid blocking
-            setTimeout(async () => {
-                try {
-                    await this.prepareTransactions();
-                } catch (error) {
-                    this.emitLog('error', `Error preparing transactions: ${error.message}`);
-                    // Retry preparation if it failed
-                    setTimeout(() => this.prepareTransactionsAsync(), 500);
-                }
-            }, 0);
-        } catch (error) {
-            this.emitLog('error', `Error scheduling transaction preparation: ${error.message}`);
-        }
-    }
-
-    /**
-     * Prepare transfer transactions in advance
+     * Prepare transfer transactions in advance with optimized fee strategy
      */
     async prepareTransactions() {
-        if (this.preparedTransactions || this.transactions.length > 0) {
-            this.emitLog('info', 'Transactions already prepared');
+        if (this.isPrepared) {
+            this.log('debug', 'Transactions already prepared');
             return;
         }
 
         try {
-            this.emitLog('info', 'Preparing transactions...');
+            this.log('info', 'Preparing transactions...');
             
-            // Load account details with retry mechanism
-            let account = null;
-            let attempts = 0;
-            const maxAttempts = 3;
-            
-            while (attempts < maxAttempts && !account) {
-                attempts++;
+            // Refresh account data if not cached or if it's more than 10 seconds old
+            if (!this.accountData || Date.now() - this.accountDataTimestamp > 10000) {
+                let accountLoaded = false;
                 
-                for (const server of this.servers) {
+                for (let i = 0; i < this.servers.length; i++) {
                     try {
-                        account = await server.loadAccount(this.sourceKeypair.publicKey());
-                        if (account) break;
-                    } catch (e) {
-                        // Try next server
-                        continue;
+                        this.accountData = await this.servers[i].loadAccount(this.sourceKeypair.publicKey());
+                        this.accountSequence = BigInt(this.accountData.sequenceNumber());
+                        this.accountDataTimestamp = Date.now();
+                        accountLoaded = true;
+                        this.log('debug', `Refreshed account data from server ${i+1}`);
+                        break;
+                    } catch (error) {
+                        this.log('warn', `Failed to refresh account from server ${i+1}: ${error.message}`);
                     }
                 }
                 
-                if (!account && attempts < maxAttempts) {
-                    // Wait before retry
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                if (!accountLoaded) {
+                    throw new Error('Failed to refresh account data from any server');
                 }
             }
             
-            if (!account) {
-                throw new Error('Failed to load account after multiple attempts');
-            }
-            
-            const currentSequence = BigInt(account.sequenceNumber());
-            const balance = account.balances.find(b => b.asset_type === 'native');
+            const balance = this.accountData.balances.find(b => b.asset_type === 'native');
             
             if (!balance) {
                 throw new Error('No native balance found');
             }
             
-            this.emitLog('info', `Current account balance: ${balance.balance} Pi`);
+            this.log('info', `Current account balance: ${balance.balance} Pi`);
             
             // Calculate amount to transfer if not specified
-            const transferAmount = this.transferAmount || parseFloat(balance.balance) * 0.95; // 95% of balance by default
-            this.emitLog('info', `Using transfer amount: ${transferAmount} Pi`);
+            const transferAmount = this.transferAmount || parseFloat(balance.balance) * 0.98; // 98% of balance by default
+            this.log('info', `Using transfer amount: ${transferAmount} Pi`);
             
-            // Use a dynamic strategy for fee distribution:
-            // - Start with the base fee
-            // - Use an exponential increase for higher priority transactions
-            // - Prepare more transactions than needed for redundancy
-            
-            const feeStrategy = [];
-            
-            // First 10 transactions: base fee + small increment (ensuring some get through)
-            for (let i = 0; i < 10; i++) {
-                feeStrategy.push(this.baseFee + (i * this.feeIncrement * 0.5));
-            }
-            
-            // Next 20 transactions: faster fee increase
-            for (let i = 0; i < 20; i++) {
-                feeStrategy.push(this.baseFee + this.feeIncrement + (i * i * this.feeIncrement * 0.2));
-            }
-            
-            // Remaining transactions: exponential increase for max competitiveness
-            for (let i = 0; i < this.txCount - 30; i++) {
-                feeStrategy.push(this.baseFee + this.feeIncrement * 2 + (i * i * this.feeIncrement * 0.4));
-            }
+            // Calculate a fee strategy that outbids competitors
+            const feeLevels = this.calculateFeeStrategy();
             
             // Prepare transactions with varying fees
             for (let i = 0; i < this.txCount; i++) {
-                // Calculate fee for this transaction using our strategy
-                const fee = Math.floor(feeStrategy[i] || (this.baseFee * 2 + (i * i * this.feeIncrement))).toString();
+                // Calculate fee based on position in sequence
+                // Use exponential fee increase for the most important transactions
+                let fee;
+                
+                if (i < 10) {
+                    // First 10 transactions get ultra-high fees (top 10%)
+                    fee = Math.floor(feeLevels.ultra + this.feeIncrement * (i * 1.5)).toString();
+                } else if (i < 30) {
+                    // Next 20 get high fees (next 20%)
+                    fee = Math.floor(feeLevels.high + this.feeIncrement * ((i - 10) * 0.8)).toString();
+                } else if (i < 60) {
+                    // Next 30 get medium fees (next 30%)
+                    fee = Math.floor(feeLevels.medium + this.feeIncrement * ((i - 30) * 0.5)).toString();
+                } else {
+                    // Rest get base fee (remaining 40%)
+                    fee = Math.floor(feeLevels.base + this.feeIncrement * ((i - 60) * 0.2)).toString();
+                }
                 
                 // Create sequence-based account object
                 const txAccount = new StellarSdk.Account(
                     this.sourceKeypair.publicKey(),
-                    (currentSequence + BigInt(i)).toString()
+                    (this.accountSequence + BigInt(i)).toString()
                 );
                 
-                // Create transaction with optimal settings
+                // Create transaction
                 const tx = new StellarSdk.TransactionBuilder(txAccount, {
                     fee,
                     networkPassphrase: this.networkPassphrase
@@ -988,223 +582,326 @@ class PiNetworkTransferFloodBot {
                     asset: StellarSdk.Asset.native(),
                     amount: transferAmount.toString()
                 }))
-                .setTimeout(60)  // Longer timeout for better chance of inclusion
+                .setTimeout(30)  // Shorter timeout for faster processing
                 .build();
                 
                 // Sign transaction
                 tx.sign(this.sourceKeypair);
                 
-                // Serialize transaction for efficient storage and worker transfer
-                const serializedTx = tx.toXDR();
-                
                 // Store transaction with metadata
                 this.transactions.push({
                     index: i,
                     fee,
-                    serializedTx,
-                    serverIndex: i % this.horizonUrls.length,
+                    tx,
+                    serverIndex: i % this.parallelConnections,  // Distribute across servers
                     attempts: 0,
-                    maxAttempts: 5 + Math.floor(i / 5)  // More attempts for higher fee transactions
+                    maxAttempts: this.maxRetries - Math.floor(i / 20),  // More attempts for higher fee transactions
+                    priority: i < 20 ? 'high' : i < 50 ? 'medium' : 'low' // Priority level for retry logic
                 });
             }
             
-            this.preparedTransactions = true;
-            this.emitLog('info', `Successfully prepared ${this.transactions.length} transactions with fees from ${this.transactions[0].fee} to ${this.transactions[this.transactions.length - 1].fee} stroops`);
+            this.log('info', `Successfully prepared ${this.transactions.length} transactions with fees from ${this.transactions[0].fee} to ${this.transactions[this.transactions.length - 1].fee} stroops`);
+            this.isPrepared = true;
         } catch (error) {
-            this.emitLog('error', `Error preparing transactions: ${error.message}`);
+            this.log('error', 'Error preparing transactions:', error);
             throw error;
         }
+    }
+    
+    /**
+     * Calculate an aggressive fee strategy based on desired percentiles
+     */
+    calculateFeeStrategy() {
+        // Calculate fee levels to ensure we win the fee auction
+        const ultraFee = Math.floor(this.baseFee * this.priorityFeeMultiplier * 1.5); // 150% of priority fee for top transactions
+        const highFee = Math.floor(this.baseFee * this.priorityFeeMultiplier);        // Full priority fee for important transactions
+        const mediumFee = Math.floor(this.baseFee * 1.2);                            // 120% of base fee for medium priority
+        const baseFee = this.baseFee;                                                // Base fee for low priority
+        
+        return {
+            ultra: ultraFee,
+            high: highFee,
+            medium: mediumFee,
+            base: baseFee
+        };
     }
 
     /**
      * Execute the transaction flood using distributed and concurrent approach
+     * with enhanced timing precision and retry logic
      */
     async executeFlood() {
-        // Use atomic check-and-set to ensure we only execute once
-        if (this._floodExecuted) {
+        if (this.floodExecuted) {
+            this.log('debug', 'Flood already executed');
             return;
         }
-        this._floodExecuted = true;
         
-        try {
-            this.emitLog('info', '🚀 EXECUTING TRANSFER FLOOD!');
-            
-            // Make sure we're marked as running
-            this.isRunning = true;
-            
-            // Clear any existing timers to prevent duplicate execution
-            this.clearAllTimers();
-            
-            // Make sure we have transactions prepared
-            if (this.transactions.length === 0) {
-                this.emitLog('info', 'No transactions prepared. Preparing now...');
-                await this.prepareTransactions();
-            }
-            
-            // Set up the worker pool if not already done
-            if (this.workerPool.length === 0) {
-                this.setupWorkerPool();
-            }
-            
-            // Create bursts of transactions for optimal network flooding
-            const burstCount = 3;  // Number of bursts
-            const burstDelay = 50; // Milliseconds between bursts (reduced from original)
-            
-            // Create submission function using worker pool
-            const submitTransaction = (txInfo) => {
-                // Early exit if we've already had a success
-                if (this.submissionResults.some(r => r.success)) {
-                    // Slow down if we've already succeeded
-                    return;
-                }
-                
-                // Choose worker using round-robin distribution
-                const workerIndex = txInfo.index % this.workerPool.length;
-                const worker = this.workerPool[workerIndex];
-                
-                if (worker) {
-                    worker.postMessage({
-                        type: 'submit-transaction',
-                        data: {
-                            index: txInfo.index,
-                            fee: txInfo.fee,
-                            serializedTx: txInfo.serializedTx,
-                            serverUrl: this.horizonUrls[txInfo.serverIndex % this.horizonUrls.length],
-                            attempts: 0,
-                            maxAttempts: txInfo.maxAttempts
-                        }
-                    });
-                } else {
-                    // Fallback to direct submission if worker is not available
-                    this.submitTransactionDirect(txInfo);
-                }
-            };
-            
-            // Execute bursts of transactions
-            for (let burst = 0; burst < burstCount; burst++) {
-                setTimeout(() => {
-                    this.emitLog('info', `Executing burst ${burst + 1}/${burstCount}...`);
-                    
-                    // Submit all transactions in this burst with minimal spacing
-                    // Start with the highest fee transactions for best chances
-                    // We sort transactions by fee (descending) to prioritize higher fees
-                    const sortedTransactions = [...this.transactions].sort((a, b) => parseInt(b.fee) - parseInt(a.fee));
-                    
-                    // Submit transactions with dynamic spacing based on system capabilities
-                    for (let i = 0; i < sortedTransactions.length; i++) {
-                        const txInfo = sortedTransactions[i];
-                        setTimeout(() => {
-                            if (this.isRunning) {
-                                submitTransaction(txInfo);
-                            }
-                        }, i * this.txSpacingMs);
-                    }
-                }, burst * burstDelay);
-            }
-            
-            // Set up a monitor to detect success and stop flooding
-            this.floodMonitorInterval = setInterval(() => {
-                const successfulTxs = this.submissionResults.filter(r => r.success);
-                
-                if (successfulTxs.length > 0) {
-                    this.emitLog('info', `Successfully transferred Pi with ${successfulTxs.length} transactions. First success: ${successfulTxs[0].hash}`);
-                    
-                    // Stop the flood after a brief delay to allow other high-priority txs to complete
-                    setTimeout(() => {
-                        this.stop();
-                    }, 2000);
-                    
-                    clearInterval(this.floodMonitorInterval);
-                }
-            }, 500);
-            
-            // Safety timeout - stop flooding after 10 seconds regardless
-            setTimeout(() => {
-                if (this.isRunning) {
-                    this.emitLog('info', 'Safety timeout reached. Stopping flood.');
-                    this.stop();
-                }
-            }, 10000);
-            
-        } catch (error) {
-            this.emitLog('error', `Error executing flood: ${error.message}`);
-            // Continue running despite errors - the workers will handle retries
+        this.floodExecuted = true;
+        this.log('info', '🚀 EXECUTING TRANSFER FLOOD!');
+        this.startTime = Date.now();
+        
+        if (!this.isPrepared) {
+            this.log('info', 'Transactions not prepared. Preparing now...');
+            await this.prepareTransactions();
         }
-    }
-    
-    /**
-     * Fallback direct transaction submission if worker is not available
-     */
-    async submitTransactionDirect(txInfo) {
-        try {
-            // Deserialize transaction
-            const tx = StellarSdk.TransactionBuilder.fromXDR(
-                txInfo.serializedTx, 
-                this.networkPassphrase
-            );
+        
+        // Create bursts of transactions
+        const burstCount = 4;  // Number of bursts
+        const burstDelay = 75;  // Milliseconds between bursts
+        
+        // Store successful transactions to avoid duplicates
+        const successful = new Set();
+        
+        // Create submission function that can be reused
+        const submitTransaction = async (txInfo) => {
+            if (successful.has(txInfo.index) || !this.isRunning) {
+                return;
+            }
             
-            // Choose server
-            const serverUrl = this.horizonUrls[txInfo.serverIndex % this.horizonUrls.length];
-            const server = new StellarSdk.Server(serverUrl);
+            // Choose the server based on round-robin
+            const server = this.getNextServer();
             
-            this.emitLog('info', `Submitting tx ${txInfo.index + 1} directly with fee: ${txInfo.fee} stroops`);
-            
-            // Submit transaction
-            const result = await server.submitTransaction(tx);
-            
-            // Process result
-            this.emitLog('info', `✅ Transaction ${txInfo.index + 1} SUCCESSFUL! Hash: ${result.hash}, Fee: ${txInfo.fee}`);
-            
-            this.submissionResults.push({
-                success: true,
-                index: txInfo.index,
-                fee: txInfo.fee,
-                hash: result.hash,
-                timestamp: new Date().toISOString()
-            });
-            
-        } catch (error) {
-            // Log error but don't stop execution
-            let errorDetail = '';
             try {
-                if (error.response && error.response.data) {
-                    const responseData = error.response.data;
-                    errorDetail = responseData.extras ? 
-                        `${responseData.extras.result_codes.transaction}: ${JSON.stringify(responseData.extras.result_codes.operations)}` :
-                        responseData.detail || '';
+                this.log('debug', `Submitting tx ${txInfo.index + 1}/${this.transactions.length} with fee: ${txInfo.fee} stroops (priority: ${txInfo.priority})`);
+                const result = await server.submitTransaction(txInfo.tx);
+                
+                // Mark as successful and log
+                successful.add(txInfo.index);
+                this.successCount++;
+                this.log('info', `✅ Transaction ${txInfo.index + 1} SUCCESSFUL! Hash: ${result.hash}, Fee: ${txInfo.fee}`);
+                
+                this.submissionResults.push({
+                    success: true,
+                    index: txInfo.index,
+                    fee: txInfo.fee,
+                    hash: result.hash,
+                    timestamp: new Date().toISOString()
+                });
+                
+                // If we've succeeded, we can stop the bot after a short delay
+                // to allow for any other successful transactions to complete
+                if (this.successCount === 1) {
+                    setTimeout(() => {
+                        if (this.isRunning) {
+                            this.log('info', '🎉 Successfully transferred Pi. Stopping bot...');
+                            this.stop();
+                        }
+                    }, 2000);
                 }
-            } catch (e) {
-                errorDetail = error.message || 'Unknown error';
+            } catch (error) {
+                txInfo.attempts++;
+                this.failureCount++;
+                
+                // Determine if we should retry based on error and priority
+                let shouldRetry = txInfo.attempts < txInfo.maxAttempts;
+                
+                // Parse error from Stellar
+                let errorDetail = '';
+                try {
+                    if (error.response && error.response.data) {
+                        const responseData = error.response.data;
+                        errorDetail = responseData.extras ? 
+                            `${responseData.extras.result_codes.transaction}: ${JSON.stringify(responseData.extras.result_codes.operations)}` :
+                            responseData.detail || '';
+                            
+                        // If we got a "tx_bad_seq" error, no point retrying this specific tx
+                        if (errorDetail.includes('tx_bad_seq')) {
+                            shouldRetry = false;
+                        }
+                        
+                        // If we got a "tx_fee_bump_inner_failed" or similar, reduce retries
+                        if (errorDetail.includes('tx_fee_bump_inner_failed')) {
+                            txInfo.maxAttempts = Math.min(txInfo.maxAttempts, txInfo.attempts + 2);
+                        }
+                    }
+                } catch (e) {
+                    errorDetail = error.message || 'Unknown error';
+                }
+                
+                // Log the error with details
+                this.log('debug', `❌ Transaction ${txInfo.index + 1} FAILED (attempt ${txInfo.attempts}/${txInfo.maxAttempts}). Fee: ${txInfo.fee}, Error: ${errorDetail}`);
+                
+                // If we should retry, schedule a retry with optimized backoff
+                if (shouldRetry) {
+                    // Prioritize retries for high-priority transactions
+                    const priorityMultiplier = txInfo.priority === 'high' ? 0.5 : 
+                                               txInfo.priority === 'medium' ? 1.0 : 2.0;
+                                               
+                    // Use shorter backoff for higher priority transactions
+                    const backoffMs = Math.min(25 * Math.pow(1.4, txInfo.attempts) * priorityMultiplier, 1000);
+                    
+                    setTimeout(() => {
+                        if (this.isRunning && !successful.has(txInfo.index)) {
+                            submitTransaction(txInfo);
+                        }
+                    }, backoffMs);
+                }
             }
-            
-            this.emitLog('error', `❌ Transaction ${txInfo.index + 1} FAILED (direct). Error: ${errorDetail}`);
+        };
+        
+        // Execute bursts of transactions
+        for (let burst = 0; burst < burstCount; burst++) {
+            setTimeout(() => {
+                if (!this.isRunning) return;
+                
+                this.log('info', `Executing burst ${burst + 1}/${burstCount}...`);
+                
+                // Prioritize transactions based on burst
+                let startIndex, endIndex;
+                
+                if (burst === 0) {
+                    // First burst: highest priority transactions (first 25%)
+                    startIndex = 0;
+                    endIndex = Math.floor(this.transactions.length * 0.25);
+                } else if (burst === 1) {
+                    // Second burst: high priority transactions (next 25%)
+                    startIndex = Math.floor(this.transactions.length * 0.25);
+                    endIndex = Math.floor(this.transactions.length * 0.5);
+                } else if (burst === 2) {
+                    // Third burst: medium priority transactions (next 25%)
+                    startIndex = Math.floor(this.transactions.length * 0.5);
+                    endIndex = Math.floor(this.transactions.length * 0.75);
+                } else {
+                    // Final burst: remaining transactions
+                    startIndex = Math.floor(this.transactions.length * 0.75);
+                    endIndex = this.transactions.length;
+                }
+                
+                // Submit all transactions in this burst with minimal spacing
+                for (let i = startIndex; i < endIndex; i++) {
+                    const txInfo = this.transactions[i];
+                    
+                    // Use varying delays based on priority
+                    const delay = i * this.txSpacingMs * (burst === 0 ? 0.5 : 1.0);
+                    
+                    setTimeout(() => {
+                        submitTransaction(txInfo);
+                    }, delay);
+                }
+            }, burst * burstDelay);
         }
     }
-    
+
     /**
-     * Clear all timers to prevent duplicate execution
+     * Set up direct timers for unlock time to ensure execution
+     * This operates independently from block monitoring
      */
-    clearAllTimers() {
-        if (this.blockMonitorInterval) {
-            clearInterval(this.blockMonitorInterval);
-            this.blockMonitorInterval = null;
+    setupDirectUnlockTimer() {
+        if (!this.unlockTime) {
+            this.log('info', 'No unlock time specified. Skipping direct timer setup.');
+            return;
         }
         
-        if (this.highPrecisionInterval) {
-            clearInterval(this.highPrecisionInterval);
-            this.highPrecisionInterval = null;
+        const now = Date.now();
+        const timeToUnlock = this.unlockTime - now;
+        
+        if (timeToUnlock <= 0) {
+            this.log('info', 'Unlock time already passed. Executing immediately.');
+            this.executeFlood();
+            return;
         }
         
-        if (this.microPrecisionInterval) {
-            clearInterval(this.microPrecisionInterval);
-            this.microPrecisionInterval = null;
+        this.log('info', `Setting up direct unlock timer for ${new Date(this.unlockTime).toISOString()} (${timeToUnlock}ms from now)`);
+        
+        // Create a tiered approach to execution
+        
+        // 1. Preparation timer - well in advance of unlock time
+        const prepTime = Math.min(timeToUnlock - 5000, 30000); // 5 seconds before unlock or 30 seconds max
+        if (prepTime > 0) {
+            const prepTimerId = setTimeout(() => {
+                if (!this.isPrepared) {
+                    this.log('info', 'DIRECT TIMER: Preparing transactions in advance');
+                    this.prepareTransactions();
+                }
+            }, Math.max(0, prepTime));
+            this.timerIDs.add(prepTimerId);
+        } else {
+            // Prepare immediately if prep time is in the past
+            this.prepareTransactions();
         }
         
-        // Clear all alarm timers
-        for (const [name, timerId] of this.timers.entries()) {
-            clearTimeout(timerId);
+        // 2. Primary execution timer - aimed at optimal execution time
+        const primaryTime = timeToUnlock - 50; // 50ms before unlock
+        if (primaryTime > 0) {
+            const primaryTimerId = setTimeout(async () => {
+                if (!this.floodExecuted) {
+                    this.log('info', 'DIRECT TIMER: Primary execution timer triggered');
+                    await this.preciseSleep(30); // Fine-tuned waiting
+                    this.executeFlood();
+                }
+            }, Math.max(0, primaryTime - 30));
+            this.timerIDs.add(primaryTimerId);
         }
-        this.timers.clear();
+        
+        // 3. Backup timers - in case primary fails
+        // First backup - slightly before primary
+        const earlyBackupTime = timeToUnlock - 100; // 100ms before unlock
+        if (earlyBackupTime > 0) {
+            const earlyTimerId = setTimeout(() => {
+                if (!this.floodExecuted) {
+                    this.log('info', 'DIRECT TIMER: Early backup execution timer triggered');
+                    this.executeFlood();
+                }
+            }, Math.max(0, earlyBackupTime));
+            this.timerIDs.add(earlyTimerId);
+        }
+        
+        // Second backup - at exactly unlock time
+        const exactTimerId = setTimeout(() => {
+            if (!this.floodExecuted) {
+                this.log('info', 'DIRECT TIMER: Exact unlock time reached, executing');
+                this.executeFlood();
+            }
+        }, Math.max(0, timeToUnlock));
+        this.timerIDs.add(exactTimerId);
+        
+        // Third backup - slightly after
+        const lateBackupTime = timeToUnlock + 50; // 50ms after unlock
+        if (lateBackupTime > 0) {
+            const lateTimerId = setTimeout(() => {
+                if (!this.floodExecuted) {
+                    this.log('info', 'DIRECT TIMER: Late backup execution timer triggered');
+                    this.executeFlood();
+                }
+            }, Math.max(0, lateBackupTime));
+            this.timerIDs.add(lateTimerId);
+        }
+        
+        // 4. Safety nets - extra failsafes
+        // First safety net - 0.5 seconds after unlock
+        const safetyNet1 = timeToUnlock + 500;
+        if (safetyNet1 > 0) {
+            const safety1Id = setTimeout(() => {
+                if (!this.floodExecuted) {
+                    this.log('warn', 'DIRECT TIMER: Safety net 1 triggered - 500ms after unlock');
+                    this.executeFlood();
+                }
+            }, Math.max(0, safetyNet1));
+            this.timerIDs.add(safety1Id);
+        }
+        
+        // Second safety net - 2 seconds after unlock
+        const safetyNet2 = timeToUnlock + 2000;
+        if (safetyNet2 > 0) {
+            const safety2Id = setTimeout(() => {
+                if (!this.floodExecuted) {
+                    this.log('warn', 'DIRECT TIMER: EMERGENCY SAFETY NET - 2s after unlock, still not executed!');
+                    this.executeFlood();
+                } else {
+                    this.log('info', 'Safety check passed - flood already executed');
+                }
+            }, Math.max(0, safetyNet2));
+            this.timerIDs.add(safety2Id);
+        }
+        
+        // Final watchdog timer
+        const watchdogTimer = setTimeout(() => {
+            if (!this.floodExecuted) {
+                this.log('error', 'FATAL: All timers failed! Executing emergency flood!');
+                this.executeFlood();
+            }
+        }, Math.max(0, timeToUnlock + 5000)); // 5 seconds after unlock
+        this.timerIDs.add(watchdogTimer);
     }
 
     /**
@@ -1212,209 +909,116 @@ class PiNetworkTransferFloodBot {
      */
     async start() {
         if (this.isRunning) {
-            this.emitLog('info', 'Bot is already running');
+            this.log('info', 'Bot is already running');
             return;
         }
         
-        this._floodExecuted = false;
-        this.emitLog('info', `Starting Enhanced Pi Network Transfer Flood Bot`);
+        this.log('info', `Starting Pi Network Transfer Flood Bot (Enhanced)`);
         this.isRunning = true;
+        this.floodExecuted = false;
+        this.isPrepared = false;
+        this.isExecuting = false;
         
         try {
-            // Initialize keypairs first
+            // Initialize keypairs and validate accounts
             await this.initializeKeypairs();
             
-            // Sync time with network
-            await this.syncWithNetworkTime();
+            // Set up direct timers for unlock time (independent of block monitoring)
+            this.setupDirectUnlockTimer();
             
-            // Start block monitoring
+            // Start block monitoring as a parallel mechanism
             await this.startBlockMonitoring();
             
-            // Check if we need to execute immediately or prepare for future execution
-            const now = this.getAdjustedTime();
+            // Check if we need to execute immediately
+            const now = Date.now();
             if (this.unlockTime && now >= this.unlockTime) {
-                this.emitLog('info', `Unlock time has already passed. Executing flood immediately.`);
+                this.log('info', `Unlock time has already passed. Executing flood immediately.`);
                 await this.executeFlood();
             } else if (this.unlockTime) {
                 const timeToUnlock = (this.unlockTime - now) / 1000;
-                this.emitLog('info', `Unlock time is ${timeToUnlock.toFixed(2)} seconds in the future. Standing by...`);
+                this.log('info', `Unlock time is ${timeToUnlock.toFixed(2)} seconds in the future. Standing by...`);
                 
-                // If unlock is very soon, prepare transactions now
-                if (timeToUnlock < 20) {
-                    this.emitLog('info', 'Unlock time is close. Preparing transactions now...');
+                // Proactively prepare transactions for faster execution
+                if (this.proactivePreparation && timeToUnlock < 30) {
+                    this.log('info', 'Proactively preparing transactions for faster execution...');
                     await this.prepareTransactions();
-                    
-                    // Also set up precision timers
-                    this.scheduleHighPrecisionTimers();
-                    
-                    // And redundant alarms
-                    this.setupRedundantAlarms();
-                } else if (timeToUnlock < 60) {
-                    // For times under 1 minute, start early preparation
-                    this.prepareTransactionsAsync();
                 }
             } else {
-                this.emitLog('info', 'No unlock time specified. Execute flood manually or set unlock time.');
+                this.log('info', 'No unlock time specified. Execute flood manually or set unlock time.');
             }
             
-            // Set up worker pool
-            this.setupWorkerPool();
+            // Register process termination handlers
+            process.on('SIGINT', () => {
+                this.log('info', 'Received SIGINT signal. Shutting down...');
+                this.stop();
+            });
             
+            process.on('SIGTERM', () => {
+                this.log('info', 'Received SIGTERM signal. Shutting down...');
+                this.stop();
+            });
+            
+            return this;
         } catch (error) {
-            this.emitLog('error', `Error starting bot: ${error.message}`);
+            this.log('error', 'Error starting bot:', error);
             this.stop();
             throw error;
         }
     }
 
     /**
-     * Stop the bot
+     * Stop the bot and clean up resources
      */
     stop() {
-        this.emitLog('info', 'Stopping bot...');
+        this.log('info', 'Stopping bot...');
         this.isRunning = false;
         this.stopBlockMonitoring();
         
-        // Clear all intervals
-        this.clearAllTimers();
-        
-        // Stop workers
-        if (this.workerPool.length > 0) {
-            this.workerPool.forEach(worker => {
-                try {
-                    worker.terminate();
-                } catch (e) {
-                    // Ignore errors when terminating
-                }
-            });
-            this.workerPool = [];
-        }
+        // Clear all timers
+        this.timerIDs.forEach(timerId => {
+            clearTimeout(timerId);
+        });
+        this.timerIDs.clear();
 
         // Display summary of results
-        const successful = this.submissionResults.filter(r => r.success);
-        if (successful.length > 0) {
-            this.emitLog('info', `\n===== SUMMARY =====`);
-            this.emitLog('info', `Successful transactions: ${successful.length}/${this.transactions.length}`);
+        this.endTime = Date.now();
+        const executionTime = this.endTime - this.startTime;
+        
+        if (this.startTime > 0) {
+            this.log('info', `\n===== EXECUTION SUMMARY =====`);
+            this.log('info', `Total execution time: ${executionTime}ms`);
+            this.log('info', `Successful transactions: ${this.successCount}`);
+            this.log('info', `Failed transactions: ${this.failureCount}`);
             
+            const successful = this.submissionResults.filter(r => r.success);
             if (successful.length > 0) {
-                const firstSuccess = successful.sort((a, b) => 
-                    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-                )[0];
+                const firstSuccess = successful.sort((a, b) => a.index - b.index)[0];
+                this.log('info', `First successful transaction: Index ${firstSuccess.index + 1}, Fee: ${firstSuccess.fee} stroops, Hash: ${firstSuccess.hash}`);
                 
-                this.emitLog('info', `First successful transaction: Index ${firstSuccess.index + 1}, Fee: ${firstSuccess.fee} stroops, Hash: ${firstSuccess.hash}`);
+                // Find the transaction with the lowest fee that succeeded
+                const lowestFeeSuccess = successful.sort((a, b) => parseInt(a.fee) - parseInt(b.fee))[0];
+                if (lowestFeeSuccess) {
+                    this.log('info', `Lowest fee successful: ${lowestFeeSuccess.fee} stroops (Index ${lowestFeeSuccess.index + 1})`);
+                }
             }
-        } else {
-            this.emitLog('info', '\n===== SUMMARY =====');
-            this.emitLog('info', 'No successful transactions. The bot might have been stopped before completion or the transactions failed.');
         }
     }
-}
-
-// Worker thread handler
-if (!isMainThread) {
-    const { workerId, horizonUrls, networkPassphrase } = workerData;
     
-    // Store servers for the worker
-    const servers = horizonUrls.map(url => new StellarSdk.Server(url));
-    
-    // Listen for messages from main thread
-    parentPort.on('message', async (message) => {
-        try {
-            if (message.type === 'submit-transaction') {
-                await handleSubmitTransaction(message.data);
-            } else if (message.type === 'retry-transaction') {
-                await handleSubmitTransaction(message.data);
-            }
-        } catch (err) {
-            parentPort.postMessage({
-                type: 'log',
-                logType: 'error',
-                message: `Worker error: ${err.message}`
-            });
-        }
-    });
-    
-    // Handle transaction submission in the worker
-    async function handleSubmitTransaction(data) {
-        try {
-            const { index, fee, serializedTx, serverUrl, attempts, maxAttempts } = data;
-            
-            // Find the correct server or create a new one
-            let server = servers.find(s => s._serverURL === serverUrl);
-            if (!server) {
-                server = new StellarSdk.Server(serverUrl);
-                servers.push(server);
-            }
-            
-            // Deserialize transaction
-            const tx = StellarSdk.TransactionBuilder.fromXDR(
-                serializedTx, 
-                networkPassphrase
-            );
-            
-            // Log submission attempt
-            parentPort.postMessage({
-                type: 'log',
-                message: `Submitting tx ${index + 1} with fee: ${fee} stroops (attempt ${attempts + 1}/${maxAttempts})`
-            });
-            
-            // Submit transaction
-            const result = await server.submitTransaction(tx);
-            
-            // Report success to main thread
-            parentPort.postMessage({
-                type: 'result',
-                data: {
-                    success: true,
-                    index,
-                    fee,
-                    hash: result.hash,
-                    timestamp: new Date().toISOString()
-                }
-            });
-        } catch (error) {
-            // Extract error details
-            let errorDetail = '';
-            let shouldRetry = true;
-            
-            try {
-                if (error.response && error.response.data) {
-                    const responseData = error.response.data;
-                    
-                    // Parse error codes
-                    if (responseData.extras && responseData.extras.result_codes) {
-                        errorDetail = `${responseData.extras.result_codes.transaction}`;
-                        
-                        // Detect permanent errors that shouldn't be retried
-                        const txCode = responseData.extras.result_codes.transaction;
-                        if (txCode === 'tx_bad_seq' || txCode === 'tx_insufficient_balance') {
-                            shouldRetry = false;
-                        }
-                    } else {
-                        errorDetail = responseData.detail || '';
-                    }
-                }
-            } catch (e) {
-                errorDetail = error.message || 'Unknown error';
-            }
-            
-            const nextAttempt = (data.attempts || 0) + 1;
-            const shouldRetryThisTime = shouldRetry && nextAttempt < data.maxAttempts;
-            
-            // Report failure to main thread
-            parentPort.postMessage({
-                type: 'result',
-                data: {
-                    success: false,
-                    index: data.index,
-                    fee: data.fee,
-                    error: errorDetail,
-                    attempt: nextAttempt,
-                    maxAttempts: data.maxAttempts,
-                    shouldRetry: shouldRetryThisTime
-                }
-            });
-        }
+    /**
+     * Get the current bot status
+     */
+    getStatus() {
+        return {
+            isRunning: this.isRunning,
+            isPrepared: this.isPrepared,
+            isExecuting: this.isExecuting,
+            floodExecuted: this.floodExecuted,
+            transactionsPrepared: this.transactions.length,
+            unlockTime: this.unlockTime ? new Date(this.unlockTime).toISOString() : null,
+            timeToUnlock: this.unlockTime ? (this.unlockTime - Date.now()) / 1000 : null,
+            successCount: this.successCount,
+            failureCount: this.failureCount
+        };
     }
 }
 

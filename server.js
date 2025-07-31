@@ -1,112 +1,99 @@
 /**
- * Enhanced Pi Network Transfer Flood Bot - Server
- * Version: 2.0.0
- * Date: 2025-07-30
+ * Enhanced Pi Network Transfer Flood Bot Server
  * 
- * Web server and socket.io interface for the bot
+ * Optimized server implementation with improved error handling,
+ * real-time status updates, and performance enhancements.
  */
-
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
+const socketIO = require('socket.io');
 const StellarSdk = require('stellar-sdk');
+const PiNetworkTransferFloodBot = require('./pi-transfer-flood');
 const path = require('path');
-const PiNetworkTransferFloodBot = require('./pi-transfer-flood-enhanced');
-const axios = require('axios');
-const { performance } = require('perf_hooks');
-const bip39 = require('bip39');
-const { derivePath } = require('ed25519-hd-key');
-const { keypairFromPassphrase } = require('./keypair-helper');
+const fs = require('fs');
+const os = require('os');
 
-// Constants
-const PORT = process.env.PORT || 3000;
-const HORIZON_URL = 'https://api.mainnet.minepi.com';
-const NETWORK_PASSPHRASE = 'Pi Network';
-const HORIZON_URLS = [
-    'https://api.mainnet.minepi.com',
-    'https://api.minepi.com'
-];
-
-// Express setup
+// Initialize Express app
 const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Create HTTP server
 const server = http.createServer(app);
+const io = socketIO(server);
 
-// Socket.io setup
-const io = socketIo(server);
+// Performance optimization: increase max listeners to avoid warnings
+server.setMaxListeners(50);
+process.setMaxListeners(50);
 
-// Store active bots and passphrases
+// Ensure public directory exists
+const publicDir = path.join(__dirname, 'public');
+if (!fs.existsSync(publicDir)){
+    fs.mkdirSync(publicDir, { recursive: true });
+    console.log('Created public directory');
+}
+
+// Serve static files from the public directory
+app.use(express.static(publicDir));
+
+// Serve the main HTML file
+app.get('/', (req, res) => {
+    res.sendFile(path.join(publicDir, 'index.html'));
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'up',
+        version: '2.0.0',
+        timestamp: new Date().toISOString(),
+        system: {
+            uptime: process.uptime(),
+            memory: process.memoryUsage(),
+            cpus: os.cpus().length,
+            load: os.loadavg()
+        }
+    });
+});
+
+// Store active bots by socket ID
 const activeBots = new Map();
-const activePassphrases = new Map();
 
-// Time synchronization service
-let networkTimeOffset = 0;
-let lastTimeSyncTime = 0;
-const TIME_SYNC_INTERVAL = 60000; // 1 minute
+// Bot activity monitoring
+let botActivityInterval = null;
 
-// Synchronize time with Pi Network servers
-async function syncNetworkTime() {
-    try {
-        const startTime = performance.now();
-        const response = await axios.get(HORIZON_URL, { timeout: 3000 });
-        const roundTripTime = performance.now() - startTime;
-        
-        // Get server time and account for round trip
-        const serverTime = new Date(response.headers.date).getTime();
-        const localTime = Date.now();
-        
-        // Adjust for round trip (approximating server time is halfway through the request)
-        const adjustedServerTime = serverTime + (roundTripTime / 2);
-        
-        // Calculate offset
-        networkTimeOffset = adjustedServerTime - localTime;
-        
-        lastTimeSyncTime = localTime;
-        console.log(`Network time synchronized. Offset: ${networkTimeOffset}ms, RTT: ${roundTripTime}ms`);
-    } catch (error) {
-        console.error('Network time synchronization failed:', error.message);
-    }
-}
-
-// Get adjusted time that's synchronized with network
-function getAdjustedTime() {
-    // If we haven't synced in a while or never synced, use local time
-    if (Date.now() - lastTimeSyncTime > 300000) { // 5 minutes
-        return Date.now();
-    }
-    
-    return Date.now() + networkTimeOffset;
-}
-
-// Sync time immediately
-syncNetworkTime();
-
-// Sync time periodically
-setInterval(syncNetworkTime, TIME_SYNC_INTERVAL);
-
-// Utility function to get locked balances
+// Helper function to get locked balances for an account with enhanced error handling
 async function getLockedBalances(publicKey) {
-    if (!publicKey) return [];
-    
     try {
-        // Try multiple endpoints for redundancy
-        const promises = HORIZON_URLS.map(url => 
-            axios.get(`${url}/claimable_balances?claimant=${publicKey}&limit=100`, { timeout: 5000 })
-                .then(response => response.data.records || [])
-                .catch(() => []) // Silently fail individual requests
-        );
+        // Create multiple server instances for redundancy
+        const servers = [
+            new StellarSdk.Server('https://api.mainnet.minepi.com'),
+            new StellarSdk.Server('https://api.mainnet.minepi.com')
+        ];
         
-        // Get results from any successful endpoint
-        const results = await Promise.all(promises);
-        const records = results.flat().filter(Boolean);
+        let claimableBalances = null;
+        let error = null;
         
-        if (!records.length) {
-            return [];
+        // Try multiple servers for redundancy
+        for (const server of servers) {
+            try {
+                claimableBalances = await server
+                    .claimableBalances()
+                    .claimant(publicKey)
+                    .limit(100)
+                    .call();
+                    
+                if (claimableBalances && claimableBalances.records) {
+                    break; // Success, exit the loop
+                }
+            } catch (err) {
+                error = err;
+                console.warn(`Failed to fetch claimable balances from server: ${err.message}`);
+                continue; // Try the next server
+            }
         }
         
-        return records.map(balance => {
+        if (!claimableBalances) {
+            throw error || new Error('Failed to fetch claimable balances from any server');
+        }
+            
+        return claimableBalances.records.map(balance => {
             let unlockTime = null;
             let amount = '0';
             
@@ -127,6 +114,7 @@ async function getLockedBalances(publicKey) {
                 id: balance.id,
                 amount,
                 unlockTime: unlockTime || new Date().toISOString(), // Default to now if no unlock time found
+                claimants: balance.claimants || []
             };
         });
     } catch (error) {
@@ -135,276 +123,361 @@ async function getLockedBalances(publicKey) {
     }
 }
 
-// Socket.io connection handler
+// Enhanced account loading with multiple server fallback
+async function loadAccountWithFallback(publicKey) {
+    const servers = [
+        new StellarSdk.Server('https://api.mainnet.minepi.com'),
+        new StellarSdk.Server('https://api.mainnet.minepi.com')
+    ];
+    
+    let account = null;
+    let lastError = null;
+    
+    for (const server of servers) {
+        try {
+            account = await server.loadAccount(publicKey);
+            if (account) {
+                return account;
+            }
+        } catch (error) {
+            lastError = error;
+            console.warn(`Failed to load account from server: ${error.message}`);
+        }
+    }
+    
+    throw lastError || new Error('Failed to load account from any server');
+}
+
+// Start bot activity monitoring
+function startBotActivityMonitoring() {
+    if (botActivityInterval) {
+        clearInterval(botActivityInterval);
+    }
+    
+    botActivityInterval = setInterval(() => {
+        activeBots.forEach((bot, socketId) => {
+            try {
+                const status = bot.getStatus();
+                const socket = io.sockets.sockets.get(socketId);
+                
+                if (socket) {
+                    socket.emit('bot-status-update', status);
+                    
+                    // If unlock time is within 10 seconds, increase update frequency
+                    if (status.timeToUnlock !== null && status.timeToUnlock < 10 && status.timeToUnlock > 0) {
+                        socket.emit('log', { 
+                            message: `T-minus ${status.timeToUnlock.toFixed(2)} seconds to unlock time`,
+                            type: 'info'
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error(`Error monitoring bot for socket ${socketId}:`, error);
+            }
+        });
+    }, 1000); // Check every second
+}
+
+// Stop bot activity monitoring
+function stopBotActivityMonitoring() {
+    if (botActivityInterval) {
+        clearInterval(botActivityInterval);
+        botActivityInterval = null;
+    }
+}
+
+// Socket.IO connection handling
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     
-    // Variables for this client
-    let passphrase = null;
-    let publicKey = null;
-    let keypair = null;
     let bot = null;
+    let publicKey = null;
+    let passphrase = null;
     
-    // Intercept console logs to forward to client
-    const originalLog = console.log;
-    const originalError = console.error;
-    
-    const forwardLog = (message, type = 'info') => {
-        // Forward to client
-        socket.emit('log', { 
-            message: typeof message === 'object' ? JSON.stringify(message) : message.toString(),
-            type 
-        });
-        
-        // Also log to server console
-        if (type === 'error') {
-            originalError(message);
-        } else {
-            originalLog(message);
-        }
+    // Setup custom logging to socket
+    const emitLog = (message, type = 'info') => {
+        socket.emit('log', { message, type });
     };
-    
-    // Override console methods for this connection
-    console.log = forwardLog;
-    console.error = (message) => forwardLog(message, 'error');
     
     // Handle login
     socket.on('login', async (data) => {
         try {
-            // Validate mnemonic
-            const mnemonic = data.passphrase.trim();
+            passphrase = data.passphrase;
             
-            try {
-                // Use our helper function to derive the keypair properly
-                keypair = keypairFromPassphrase(mnemonic);
-                publicKey = keypair.publicKey();
-                
-                console.log("Successfully derived keypair for", publicKey);
-                
-                // Store passphrase securely for this connection
-                passphrase = mnemonic;
-                activePassphrases.set(socket.id, passphrase);
-                
-                // Get account info and balance with redundancy
-                let account = null;
-                let error = null;
-                
-                for (const url of HORIZON_URLS) {
-                    try {
-                        const server = new StellarSdk.Server(url);
-                        account = await server.loadAccount(publicKey);
-                        if (account) break;
-                    } catch (e) {
-                        error = e;
-                        continue;
-                    }
-                }
-                
-                if (!account && error) {
-                    throw error;
-                }
-                
-                const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-                const balance = nativeBalance ? nativeBalance.balance : '0';
-                
-                // Get locked balances
-                const lockedBalances = await getLockedBalances(publicKey);
-                
-                socket.emit('login-response', {
-                    success: true,
-                    publicKey,
-                    balance,
-                    lockedBalances
-                });
-                
-                console.log(`Logged in: ${publicKey}`);
-            } catch (error) {
-                throw new Error(`Invalid passphrase: ${error.message}`);
+            // Create a temporary bot instance to validate passphrase and get public key
+            const tempBot = new PiNetworkTransferFloodBot({
+                sourcePassphrase: passphrase,
+                logLevel: 'info'
+            });
+            
+            // Get keypair to validate the passphrase
+            const keypair = tempBot.keypairFromPassphrase(passphrase);
+            publicKey = keypair.publicKey();
+            
+            emitLog(`Validating account ${publicKey.substring(0, 5)}...${publicKey.substring(publicKey.length - 5)}`);
+            
+            // Load account details with enhanced error handling
+            const account = await loadAccountWithFallback(publicKey);
+            
+            // Get native balance
+            const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+            const balance = nativeBalance ? nativeBalance.balance : '0';
+            
+            // Get locked balances
+            emitLog('Fetching locked balances...');
+            const lockedBalances = await getLockedBalances(publicKey);
+            
+            // Send success response
+            socket.emit('login-response', {
+                success: true,
+                publicKey,
+                balance,
+                lockedBalances
+            });
+            
+            emitLog(`Login successful. Found ${lockedBalances.length} locked balances.`, 'success');
+            
+            // Start bot activity monitoring if not already started
+            if (!botActivityInterval) {
+                startBotActivityMonitoring();
             }
         } catch (error) {
-            console.error(`Login error: ${error.message}`);
+            console.error('Login error:', error);
+            emitLog(`Login failed: ${error.message}`, 'error');
             socket.emit('login-response', {
                 success: false,
-                error: error.message
+                error: error.message || 'Invalid passphrase or network error'
             });
         }
     });
     
-    // Handle balance refresh
+    // Handle refresh balance
     socket.on('refresh-balance', async () => {
         if (!publicKey) {
-            socket.emit('log', { message: 'Not logged in', type: 'error' });
+            emitLog('Not logged in', 'error');
             return;
         }
         
         try {
-            // Get account info and balance with redundancy
-            let account = null;
-            let error = null;
+            emitLog('Refreshing balance...');
             
-            for (const url of HORIZON_URLS) {
-                try {
-                    const server = new StellarSdk.Server(url);
-                    account = await server.loadAccount(publicKey);
-                    if (account) break;
-                } catch (e) {
-                    error = e;
-                    continue;
-                }
-            }
+            // Load account with enhanced error handling
+            const account = await loadAccountWithFallback(publicKey);
             
-            if (!account && error) {
-                throw error;
-            }
-            
+            // Get native balance
             const nativeBalance = account.balances.find(b => b.asset_type === 'native');
             const balance = nativeBalance ? nativeBalance.balance : '0';
             
             // Get locked balances
             const lockedBalances = await getLockedBalances(publicKey);
             
-            socket.emit('balance-update', {
+            socket.emit('balance-updated', {
                 balance,
                 lockedBalances
             });
             
-            console.log(`Balance refreshed for ${publicKey}: ${balance} Pi`);
+            emitLog(`Balance updated: ${balance} π`, 'success');
+            
         } catch (error) {
-            console.error(`Balance refresh error: ${error.message}`);
-            socket.emit('log', { message: `Error refreshing balance: ${error.message}`, type: 'error' });
+            console.error('Error refreshing balance:', error);
+            emitLog(`Error refreshing balance: ${error.message}`, 'error');
         }
     });
     
-    // Handle transaction history request
+    // Handle refresh locked balances
+    socket.on('refresh-locked-balances', async () => {
+        if (!publicKey) {
+            emitLog('Not logged in', 'error');
+            return;
+        }
+        
+        try {
+            emitLog('Refreshing locked balances...');
+            const lockedBalances = await getLockedBalances(publicKey);
+            
+            socket.emit('locked-balances-updated', {
+                lockedBalances
+            });
+            
+            emitLog(`Found ${lockedBalances.length} locked balances`, 'success');
+            
+        } catch (error) {
+            console.error('Error refreshing locked balances:', error);
+            emitLog(`Error refreshing locked balances: ${error.message}`, 'error');
+        }
+    });
+    
+    // Handle get transaction history with improved error handling
     socket.on('get-txn-history', async () => {
         if (!publicKey) {
-            socket.emit('log', { message: 'Not logged in', type: 'error' });
-            socket.emit('txn-history', { transactions: [] });
+            emitLog('Not logged in', 'error');
             return;
         }
         
         try {
+            emitLog('Fetching transaction history...');
+            
+            // Create multiple server instances for redundancy
+            const servers = [
+                new StellarSdk.Server('https://api.mainnet.minepi.com'),
+                new StellarSdk.Server('https://api.mainnet.minepi.com')
+            ];
+            
+            let transactions = null;
+            
             // Try multiple servers for redundancy
-            let txns = null;
-            let error = null;
-            
-            for (const url of HORIZON_URLS) {
+            for (const server of servers) {
                 try {
-                    const server = new StellarSdk.Server(url);
-                    txns = await server.transactions()
+                    transactions = await server
+                        .transactions()
                         .forAccount(publicKey)
-                        .order('desc')
                         .limit(20)
+                        .order('desc')
                         .call();
                         
-                    if (txns) break;
-                } catch (e) {
-                    error = e;
-                    continue;
+                    if (transactions && transactions.records) {
+                        break; // Success, exit the loop
+                    }
+                } catch (err) {
+                    console.warn(`Failed to fetch transactions from server: ${err.message}`);
+                    continue; // Try the next server
                 }
             }
             
-            if (!txns && error) {
-                throw error;
+            if (!transactions) {
+                throw new Error('Failed to fetch transactions from any server');
             }
             
-            const server = new StellarSdk.Server(HORIZON_URL);
-            const transactions = await Promise.all(txns.records.map(async (txn) => {
+            // Process transactions
+            const processedTxns = [];
+            const server = servers[0]; // Use first server for operation details
+            
+            for (const txn of transactions.records) {
                 try {
-                    // Get operations for this transaction
-                    const ops = await server.operations()
-                        .forTransaction(txn.hash)
+                    const operations = await server
+                        .operations()
+                        .forTransaction(txn.id)
                         .call();
-                        
-                    // Extract relevant details from operations
-                    const operations = ops.records.map(op => ({
-                        type: op.type,
-                        amount: op.amount,
-                        asset: op.asset_type === 'native' ? 'Pi' : op.asset_code,
-                        from: op.from || op.source_account,
-                        to: op.to || null
-                    }));
                     
-                    return {
-                        hash: txn.hash,
-                        date: new Date(txn.created_at).toISOString(),
-                        fee: txn.fee_charged,
-                        operations
-                    };
-                } catch (e) {
-                    // Return partial information if operations fetch fails
-                    return {
-                        hash: txn.hash,
-                        date: new Date(txn.created_at).toISOString(),
-                        fee: txn.fee_charged,
-                        operations: []
-                    };
+                    for (const op of operations.records) {
+                        let type = op.type;
+                        let amount = '';
+                        
+                        if (op.type === 'payment' && op.asset_type === 'native') {
+                            amount = `${op.amount} π`;
+                            type = op.from === publicKey ? 'Sent' : 'Received';
+                        } else if (op.type === 'claim_claimable_balance') {
+                            amount = 'Claimed';
+                            type = 'Claim';
+                        } else if (op.type === 'create_claimable_balance') {
+                            amount = op.amount || '';
+                            type = 'Lock';
+                        }
+                        
+                        processedTxns.push({
+                            type,
+                            amount,
+                            date: txn.created_at,
+                            link: `https://blockexplorer.minepi.com/tx/${txn.id}`
+                        });
+                    }
+                } catch (opError) {
+                    console.warn(`Error fetching operations for transaction ${txn.id}:`, opError.message);
+                    // Add a simplified entry if operation details fail
+                    processedTxns.push({
+                        type: 'Transaction',
+                        amount: '',
+                        date: txn.created_at,
+                        link: `https://blockexplorer.minepi.com/tx/${txn.id}`
+                    });
                 }
-            }));
+            }
             
-            socket.emit('txn-history', { transactions });
+            socket.emit('txn-history', {
+                transactions: processedTxns.slice(0, 10) // Limit to 10 transactions
+            });
+            
+            emitLog(`Found ${processedTxns.length} transactions`, 'success');
+            
         } catch (error) {
             console.error('Error fetching transaction history:', error);
-            socket.emit('log', { message: `Error fetching transaction history: ${error.message}`, type: 'error' });
+            emitLog(`Error fetching transaction history: ${error.message}`, 'error');
             socket.emit('txn-history', { transactions: [] });
         }
     });
     
-    // Handle start bot with enhanced timing precision
-    socket.on('start-bot', async (data) => {
+    // Handle start bot with enhanced configuration
+    socket.on('start-bot', (data) => {
         if (!passphrase) {
-            socket.emit('log', { message: 'Not logged in', type: 'error' });
+            emitLog('Not logged in', 'error');
             return;
         }
         
         try {
-            // Stop any existing bot
-            if (bot) {
-                bot.stop();
-                bot = null;
+            // Validate target address
+            if (!data.targetAddress) {
+                throw new Error('Target address is required');
             }
             
-            // Create new bot instance with enhanced timing features
+            try {
+                StellarSdk.Keypair.fromPublicKey(data.targetAddress);
+            } catch (error) {
+                throw new Error(`Invalid target address: ${error.message}`);
+            }
+            
+            // Create new bot instance with enhanced configuration
             bot = new PiNetworkTransferFloodBot({
-                horizonUrls: HORIZON_URLS,
-                networkPassphrase: NETWORK_PASSPHRASE,
                 sourcePassphrase: passphrase,
                 targetAddress: data.targetAddress,
                 transferAmount: data.transferAmount,
-                baseFee: data.baseFee || 3200000,
+                baseFee: data.baseFee || 3500000,  // Increased default fee
                 unlockTime: data.unlockTime,
-                preFloodSeconds: 5, // Increased from default for better preparation
-                timeSyncIntervalMs: 30000, // Sync time every 30 seconds
-                precisionTimerThreshold: 10 // Use high-precision timing when within 10 seconds
+                // Enhanced features
+                timingPrecision: true,
+                redundantTimers: true,
+                proactivePreparation: true,
+                logLevel: 'info',
+                txCount: 100,  // Increased tx count
+                parallelConnections: 10,  // More parallel connections
+                preFloodSeconds: 5,  // Start preparing earlier
+                priorityFeeMultiplier: 2.5  // More aggressive fee strategy
             });
             
-            // Set logger to forward logs to client
-            bot.setLogger((logData) => {
-                socket.emit('log', logData);
-            });
+            // Intercept logs to forward to client
+            const originalConsoleLog = console.log;
+            console.log = function() {
+                // Call original console.log
+                originalConsoleLog.apply(console, arguments);
+                
+                // Send to client if it looks like a bot log message
+                const message = Array.from(arguments).join(' ');
+                
+                // Only forward bot-related logs (those with timestamps/level indicators)
+                if (message.includes('[INFO]') || message.includes('[DEBUG]') || 
+                    message.includes('[WARN]') || message.includes('[ERROR]')) {
+                    
+                    let type = 'info';
+                    if (message.includes('[ERROR]')) type = 'error';
+                    if (message.includes('[WARN]')) type = 'warning';
+                    
+                    socket.emit('log', { message, type });
+                }
+            };
             
             // Store bot in active bots
             activeBots.set(socket.id, bot);
             
             // Start bot
-            await bot.start();
+            bot.start();
             
-            socket.emit('log', { message: 'Bot started successfully', type: 'success' });
+            emitLog('Bot started successfully', 'success');
+            
+            // Send initial status
+            socket.emit('bot-status-update', bot.getStatus());
             
         } catch (error) {
             console.error('Error starting bot:', error);
-            socket.emit('log', { message: `Error starting bot: ${error.message}`, type: 'error' });
-            
-            // Clean up failed bot
-            if (bot) {
-                try {
-                    bot.stop();
-                } catch (e) {
-                    // Ignore cleanup errors
-                }
-                bot = null;
-                activeBots.delete(socket.id);
-            }
+            emitLog(`Error starting bot: ${error.message}`, 'error');
         }
     });
     
@@ -412,26 +485,31 @@ io.on('connection', (socket) => {
     socket.on('stop-bot', () => {
         if (bot) {
             bot.stop();
-            bot = null;
             activeBots.delete(socket.id);
-            socket.emit('log', { message: 'Bot stopped', type: 'info' });
+            emitLog('Bot stopped', 'info');
+            
+            // Restore original console methods
+            console.log = console.log;
         } else {
-            socket.emit('log', { message: 'No active bot to stop', type: 'warning' });
+            emitLog('No active bot to stop', 'warning');
         }
     });
     
-    // Handle network time sync request
-    socket.on('sync-network-time', async () => {
-        try {
-            await syncNetworkTime();
-            socket.emit('log', { 
-                message: `Network time synchronized. Offset: ${networkTimeOffset}ms`,
-                type: 'info'
-            });
-        } catch (error) {
-            socket.emit('log', {
-                message: `Failed to sync network time: ${error.message}`,
-                type: 'error'
+    // Handle get bot status
+    socket.on('get-bot-status', () => {
+        if (bot) {
+            socket.emit('bot-status-update', bot.getStatus());
+        } else {
+            socket.emit('bot-status-update', {
+                isRunning: false,
+                isPrepared: false,
+                isExecuting: false,
+                floodExecuted: false,
+                transactionsPrepared: 0,
+                unlockTime: null,
+                timeToUnlock: null,
+                successCount: 0,
+                failureCount: 0
             });
         }
     });
@@ -447,26 +525,68 @@ io.on('connection', (socket) => {
             activeBots.delete(socket.id);
         }
         
-        // Remove stored passphrase
-        activePassphrases.delete(socket.id);
-        
         // Restore original console methods
-        console.log = originalLog;
-        console.error = originalError;
+        console.log = console.log;
+        
+        // If no more active connections, stop monitoring
+        if (activeBots.size === 0) {
+            stopBotActivityMonitoring();
+        }
     });
 });
 
-// Start server
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Enhanced Pi Network Transfer Flood Bot Server started at ${new Date().toISOString()}`);
-    console.log('Initializing network time synchronization...');
+// Process termination handlers
+process.on('SIGINT', () => {
+    console.log('Received SIGINT. Shutting down server...');
+    stopBotActivityMonitoring();
     
-    // Initial time sync
-    syncNetworkTime().then(() => {
-        console.log('Ready to handle connections');
-    }).catch(err => {
-        console.error('Initial time sync failed:', err.message);
-        console.log('Continuing with local time until sync succeeds');
+    // Stop all active bots
+    activeBots.forEach((bot) => {
+        bot.stop();
     });
+    
+    // Clear the activeBots map
+    activeBots.clear();
+    
+    // Close the server
+    server.close(() => {
+        console.log('Server shutdown complete');
+        process.exit(0);
+    });
+});
+
+process.on('SIGTERM', () => {
+    console.log('Received SIGTERM. Shutting down server...');
+    stopBotActivityMonitoring();
+    
+    // Stop all active bots
+    activeBots.forEach((bot) => {
+        bot.stop();
+    });
+    
+    // Clear the activeBots map
+    activeBots.clear();
+    
+    // Close the server
+    server.close(() => {
+        console.log('Server shutdown complete');
+        process.exit(0);
+    });
+});
+
+// Uncaught exception handler
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error);
+    
+    // Log but don't exit - keep server running
+    console.log('Server continuing despite error...');
+});
+
+// Start server
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+    console.log(`Enhanced Pi Transfer Flood Bot Server running on port ${PORT}`);
+    console.log(`Server time: ${new Date().toISOString()}`);
+    console.log(`System: ${os.platform()} ${os.release()} (${os.cpus().length} CPUs, ${Math.round(os.totalmem() / 1024 / 1024 / 1024)} GB RAM)`);
+    console.log('Ready to receive connections');
 });

@@ -3,876 +3,1151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Enhanced Pi Transfer Flood Bot</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <title>Pi Network Transfer Flood Bot - Professional Edition</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <style>
+        :root {
+            --primary-color: #8e44ad;
+            --primary-color-dark: #7d3c98;
+            --secondary-color: #2c3e50;
+            --success-color: #27ae60;
+            --danger-color: #e74c3c;
+            --warning-color: #f39c12;
+            --info-color: #3498db;
+        }
+        
         body {
             background-color: #f8f9fa;
+            padding-top: 20px;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .wallet-address {
-            word-break: break-all;
-            font-family: monospace;
-            font-size: 0.85rem;
+        
+        .card {
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+            border: none;
+            overflow: hidden;
+            margin-bottom: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
+        
+        .card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-color-dark));
+            color: white;
+            font-weight: 600;
+            border-bottom: none;
+            padding: 15px 20px;
+        }
+        
+        .form-control:focus, .btn:focus {
+            box-shadow: 0 0 0 0.25rem rgba(142, 68, 173, 0.25);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-color-dark));
+            border-color: var(--primary-color-dark);
+            font-weight: 500;
+        }
+        
+        .btn-primary:hover, .btn-primary:focus {
+            background: linear-gradient(135deg, var(--primary-color-dark), #6c3483);
+            border-color: #6c3483;
+        }
+        
+        .btn-outline-primary {
+            color: var(--primary-color);
+            border-color: var(--primary-color);
+            font-weight: 500;
+        }
+        
+        .btn-outline-primary:hover {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            border-color: #c0392b;
+        }
+        
+        .btn-danger:hover {
+            background: linear-gradient(135deg, #c0392b, #a93226);
+            border-color: #a93226;
+        }
+        
         .log-container {
-            height: 400px;
+            height: 350px;
             overflow-y: auto;
-            font-family: monospace;
-            font-size: 0.85rem;
-            background-color: #000;
-            color: #fff;
-            padding: 10px;
-            border-radius: 5px;
+            background-color: #1e272e;
+            color: #d2dae2;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
         }
-        .log-line {
-            margin: 0;
-            padding: 2px 0;
+        
+        .log-entry {
+            margin-bottom: 6px;
+            padding: 3px 0;
+            border-bottom: 1px solid #3d4852;
         }
-        .log-info {
-            color: #17a2b8;
+        
+        .success {
+            color: #2ecc71;
         }
-        .log-success {
-            color: #28a745;
+        
+        .error {
+            color: #e74c3c;
         }
-        .log-warning {
-            color: #ffc107;
+        
+        .warning {
+            color: #f39c12;
         }
-        .log-error {
-            color: #dc3545;
+        
+        .info {
+            color: #3498db;
         }
+        
+        .debug {
+            color: #95a5a6;
+        }
+        
+        #locked-balances-list {
+            max-height: 220px;
+            overflow-y: auto;
+        }
+        
         .hidden {
             display: none !important;
         }
+        
         .balance-item {
             cursor: pointer;
             transition: background-color 0.2s;
+            border-radius: 8px;
+            margin-bottom: 5px;
         }
+        
         .balance-item:hover {
-            background-color: #f0f0f0;
+            background-color: #f1f5f9;
         }
+        
         .balance-item.selected {
-            background-color: #e2f0ff !important;
+            background-color: rgba(142, 68, 173, 0.1);
+            border-left: 3px solid var(--primary-color);
         }
-        .copy-btn {
-            cursor: pointer;
-            color: #6c757d;
-        }
-        .copy-btn:hover {
-            color: #0d6efd;
-        }
+        
         .unlock-time-display {
-            font-size: 0.9rem;
-            font-weight: 500;
-            margin-top: 0.25rem;
+            font-size: 15px;
+            font-weight: 600;
+            margin-top: 5px;
+            transition: color 0.3s;
         }
-        .stats-card {
-            border-left: 4px solid #0d6efd;
-        }
+        
         .countdown-display {
-            font-size: 1.25rem;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 1.2rem;
             font-weight: 700;
-            color: #0d6efd;
-            font-family: monospace;
+            text-align: center;
+            background: linear-gradient(135deg, #3498db, #8e44ad);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
         }
-        .refresh-icon {
-            cursor: pointer;
-            transition: transform 0.3s ease;
+        
+        .copy-btn {
+            opacity: 0.7;
+            transition: opacity 0.2s;
         }
-        .refresh-icon:hover {
-            transform: rotate(180deg);
+        
+        .copy-btn:hover {
+            opacity: 1;
         }
-        #network-time {
-            font-family: monospace;
+        
+        .status-badge {
+            position: relative;
+            padding: 5px 10px;
+            border-radius: 50px;
             font-size: 0.8rem;
-            color: #6c757d;
+            font-weight: 600;
+            margin-right: 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
         }
-        .blinking {
-            animation: blinking 1s infinite;
+        
+        .status-badge.preparing {
+            background-color: #f39c12;
+            color: white;
         }
-        @keyframes blinking {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
+        
+        .status-badge.ready {
+            background-color: #2ecc71;
+            color: white;
         }
-        .precision-indicator {
-            height: 10px;
-            width: 10px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 5px;
+        
+        .status-badge.standby {
+            background-color: #3498db;
+            color: white;
         }
-        .precision-normal {
-            background-color: #6c757d;
+        
+        .status-badge.executing {
+            background-color: #e74c3c;
+            color: white;
+            animation: pulse 1.5s infinite;
         }
-        .precision-high {
-            background-color: #ffc107;
+        
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.7;
+            }
+            100% {
+                opacity: 1;
+            }
         }
-        .precision-ultra {
-            background-color: #dc3545;
+        
+        .badge-close-time {
+            background-color: rgba(142, 68, 173, 0.1);
+            color: var(--primary-color);
+            border: 1px solid rgba(142, 68, 173, 0.2);
+            padding: 5px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.75rem;
+        }
+        
+        .progress-container {
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db, #8e44ad);
+            transition: width 0.3s ease;
+        }
+        
+        .tooltip-inner {
+            max-width: 300px;
+            background-color: var(--secondary-color);
+        }
+        
+        /* Animation for transactions */
+        @keyframes newTransaction {
+            0% {
+                background-color: rgba(46, 204, 113, 0.3);
+            }
+            100% {
+                background-color: transparent;
+            }
+        }
+        
+        .new-transaction {
+            animation: newTransaction 2s ease-out;
+        }
+        
+        /* Switch Styles */
+        .form-switch .form-check-input {
+            width: 3em;
+            height: 1.5em;
+        }
+        
+        .form-switch .form-check-input:checked {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        /* Version tag */
+        .version-tag {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            margin-left: 10px;
+            font-weight: normal;
         }
     </style>
 </head>
 <body>
-    <div class="container py-4">
-        <div class="row mb-4">
-            <div class="col-12">
-                <h1 class="text-center mb-0">
-                    <span class="text-primary">Enhanced</span> Pi Transfer Flood Bot
-                </h1>
-                <p class="text-center text-muted">High-Precision Timing · Multi-Threaded · Network-Synchronized</p>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-lg-10">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1 class="fw-bold text-secondary">
+                        <i class="bi bi-lightning-charge-fill text-primary"></i> 
+                        Pi Network Transfer Flood Bot
+                        <span class="version-tag">v2.0.0</span>
+                    </h1>
+                    <div id="system-time" class="badge bg-secondary py-2 px-3"></div>
+                </div>
                 
-                <!-- System status indicator -->
-                <div class="d-flex justify-content-center align-items-center">
-                    <div id="system-status" class="d-flex align-items-center">
-                        <small class="text-muted me-3">
-                            <span id="network-time">--:--:--</span>
-                            <i class="bi bi-arrow-repeat ms-1 refresh-icon" id="sync-time-btn" title="Sync time with network"></i>
-                        </small>
-                        
-                        <div class="d-flex align-items-center me-3">
-                            <span class="precision-indicator precision-normal" id="precision-indicator"></span>
-                            <small class="text-muted" id="precision-mode">Normal Mode</small>
-                        </div>
-                        
-                        <small class="text-muted">
-                            Time offset: <span id="time-offset">0</span>ms
-                        </small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Login Section -->
-        <div id="login-section" class="row justify-content-center">
-            <div class="col-md-8 col-lg-6">
-                <div class="card shadow">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">Login with Pi Wallet Passphrase</h5>
+                <!-- Login Section -->
+                <div id="login-section" class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Secure Login</h5>
                     </div>
                     <div class="card-body">
-                        <div class="mb-3">
-                            <label for="passphrase" class="form-label">Enter your 24-word recovery phrase</label>
-                            <textarea class="form-control" id="passphrase" rows="3" placeholder="Enter your 24-word recovery phrase"></textarea>
-                            <div class="form-text text-muted">
-                                Your passphrase never leaves this device. It is used to sign transactions locally.
+                        <div class="alert alert-info mb-4">
+                            <i class="bi bi-info-circle-fill"></i> 
+                            <strong>Enhanced Version 2.0.0:</strong> This bot has been optimized for precise timing and aggressive transaction submission to outperform competitors written in Rust and Go.
+                        </div>
+                        
+                        <form id="login-form">
+                            <div class="mb-3">
+                                <label for="passphrase" class="form-label">24-word Mnemonic Passphrase</label>
+                                <textarea class="form-control" id="passphrase" rows="3" placeholder="Enter your 24-word mnemonic passphrase" required></textarea>
+                                <div class="form-text">Your passphrase never leaves your browser and is only used to create and sign transactions.</div>
                             </div>
-                        </div>
-                        <div class="d-grid gap-2">
-                            <button id="login-btn" class="btn btn-primary">
-                                <i class="bi bi-wallet2"></i> Login
-                            </button>
-                        </div>
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="bi bi-shield-lock"></i> Secure Login
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
-            </div>
-        </div>
-        
-        <!-- Dashboard Section (initially hidden) -->
-        <div id="dashboard-section" class="row hidden">
-            <!-- Wallet Information -->
-            <div class="col-12 mb-4">
-                <div class="card shadow">
-                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">Pi Wallet</h5>
-                        <div>
-                            <button id="refresh-balance-btn" class="btn btn-sm btn-outline-light me-2">
-                                <i class="bi bi-arrow-clockwise"></i> Refresh Balance
-                            </button>
-                            <button id="show-txn-history-btn" class="btn btn-sm btn-outline-light">
-                                <i class="bi bi-clock-history"></i> Transaction History
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <h5 class="mb-2">Public Key</h5>
-                                <div class="d-flex align-items-center mb-3">
-                                    <span id="public-key" class="wallet-address me-2"></span>
-                                    <i class="bi bi-clipboard copy-btn" data-target="public-key" title="Copy to clipboard"></i>
+                
+                <!-- Dashboard Section -->
+                <div id="dashboard-section" class="hidden">
+                    <div class="row">
+                        <!-- Wallet Info -->
+                        <div class="col-md-6 mb-4">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0">Wallet Information</h5>
+                                    <div id="bot-status" class="status-badge standby">
+                                        <i class="bi bi-circle-fill"></i>
+                                        <span>Standby</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-md-6">
-                                <h5 class="mb-2">Available Balance</h5>
-                                <div class="d-flex align-items-center">
-                                    <h3 id="available-balance" class="mb-0"></h3>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <h6>Public Key:</h6>
+                                        <div class="d-flex align-items-center">
+                                            <code id="public-key" class="me-2 text-break">-</code>
+                                            <button class="btn btn-sm btn-outline-secondary copy-btn" data-target="public-key">
+                                                <i class="bi bi-clipboard"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <h6>Available Balance:</h6>
+                                        <h3 id="available-balance" class="text-primary">-</h3>
+                                    </div>
+                                    <div class="mb-3">
+                                        <h6>Network Status:</h6>
+                                        <div class="d-flex align-items-center">
+                                            <span id="network-status" class="badge bg-success me-2">
+                                                <i class="bi bi-wifi"></i> Connected
+                                            </span>
+                                            <span id="last-block" class="badge-close-time">Last block: Checking...</span>
+                                        </div>
+                                    </div>
+                                    <button id="refresh-balance" class="btn btn-outline-primary">
+                                        <i class="bi bi-arrow-clockwise"></i> Refresh Balance
+                                    </button>
                                 </div>
                             </div>
                         </div>
                         
-                        <div class="row mt-3">
-                            <div class="col-12">
-                                <h5>Locked Balances</h5>
-                                <div class="list-group mb-2" id="locked-balances-list">
-                                    <div class="list-group-item text-center py-3 text-muted" id="no-locked-balances">
-                                        No locked balances found
+                        <!-- Locked Balances -->
+                        <div class="col-md-6 mb-4">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0">Locked Balances</h5>
+                                    <button id="refresh-locked-balances" class="btn btn-sm btn-outline-light">
+                                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                                    </button>
+                                </div>
+                                <div class="card-body">
+                                    <div id="locked-balances-list" class="list-group mb-3">
+                                        <div class="text-center py-3" id="no-locked-balances">
+                                            <em>No locked balances found</em>
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between">
+                                        <button id="show-txn-history" class="btn btn-outline-primary btn-sm">
+                                            <i class="bi bi-clock-history"></i> Transaction History
+                                        </button>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-            
-            <!-- Bot Control Panel -->
-            <div class="col-12 mb-4">
-                <div class="card shadow">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">Bot Control Panel</h5>
-                    </div>
-                    <div class="card-body">
-                        <div id="transfer-fields-container">
-                            <div class="mb-4">
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
+                    
+                    <!-- Bot Control Panel -->
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Bot Control Panel</h5>
+                            <div id="countdown-timer" class="hidden">
+                                Unlock in: <span id="countdown-value">--:--:--</span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="transfer-fields-container" class="mb-4">
+                                <h6 class="mb-3">Transfer Configuration</h6>
+                                <div class="mb-3 row">
+                                    <div class="col-md-6">
                                         <label for="target-address" class="form-label">Target Address</label>
-                                        <input type="text" class="form-control" id="target-address" placeholder="Enter target wallet address">
-                                        <small class="form-text text-muted">The Pi wallet to receive the transfer</small>
+                                        <input type="text" class="form-control" id="target-address" placeholder="G..." required>
                                     </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label for="transfer-amount" class="form-label">Transfer Amount (optional)</label>
-                                        <div class="input-group">
-                                            <input type="number" class="form-control" id="transfer-amount" placeholder="Leave blank to use max available">
-                                            <span class="input-group-text">π</span>
-                                        </div>
-                                        <small class="form-text text-muted">If blank, 95% of available balance will be used</small>
+                                    <div class="col-md-6">
+                                        <label for="transfer-amount" class="form-label">Amount (Pi)</label>
+                                        <input type="number" step="0.0000001" class="form-control" id="transfer-amount" placeholder="0.0">
+                                        <div class="form-text">Leave blank to transfer maximum available (98% of balance)</div>
                                     </div>
                                 </div>
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label for="base-fee" class="form-label">Base Fee (stroops)</label>
-                                        <input type="number" class="form-control" id="base-fee" value="3200000">
-                                        <small class="form-text text-muted">Recommended: 3200000+ for competitive transfers</small>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <div class="mb-2">
-                                            <strong>Selected Unlock Time:</strong>
+                                
+                                <div class="mb-3 row">
+                                    <div class="col-md-6">
+                                        <label for="base-fee" class="form-label">Base Fee Strategy</label>
+                                        <select class="form-select" id="base-fee">
+                                            <option value="3500000">Aggressive (3,500,000 stroops)</option>
+                                            <option value="4200000">Dominate (4,200,000 stroops)</option>
+                                            <option value="5000000">Ultra (5,000,000 stroops)</option>
+                                            <option value="custom">Custom...</option>
+                                        </select>
+                                        <div id="custom-fee-container" class="mt-2 hidden">
+                                            <input type="number" class="form-control" id="custom-fee" placeholder="Enter custom fee (stroops)">
                                         </div>
+                                        <div class="form-text">Higher fees increase chances of winning the race</div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="unlock-time-display" class="form-label">Selected Unlock Time</label>
                                         <div id="unlock-time-display" class="unlock-time-display text-primary">
                                             No unlock time selected
                                         </div>
                                         <input type="hidden" id="unlock-time-ms" value="">
-                                    </div>
-                                </div>
-                                <div class="mb-3">
-                                    <div class="form-text text-info">
-                                        <strong>Note:</strong> Select a locked balance from the list to set the unlock time automatically.
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Countdown Timer (shown when unlock time is set and approaching) -->
-                            <div id="countdown-container" class="mb-4 hidden">
-                                <div class="card bg-light border-primary">
-                                    <div class="card-body text-center">
-                                        <h6 class="card-title">Time until execution</h6>
-                                        <div id="countdown-display" class="countdown-display">00:00:00.000</div>
-                                        <div id="precision-status" class="text-muted small mt-2">
-                                            Normal precision monitoring active
+                                        <div class="form-text">
+                                            <i class="bi bi-info-circle"></i> Select a locked balance from the list
                                         </div>
                                     </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="form-check form-switch mb-2">
+                                                <input class="form-check-input" type="checkbox" id="high-precision-timing" checked>
+                                                <label class="form-check-label" for="high-precision-timing">
+                                                    High-Precision Timing
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Uses nanosecond-precise timing mechanisms</div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-check form-switch mb-2">
+                                                <input class="form-check-input" type="checkbox" id="redundant-timers" checked>
+                                                <label class="form-check-label" for="redundant-timers">
+                                                    Redundant Execution Timers
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Multiple fallback timers for maximum reliability</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="progress-container" id="prepare-progress-container">
+                                    <div class="progress-bar" id="prepare-progress-bar" style="width: 0%"></div>
                                 </div>
                             </div>
                             
                             <div class="d-grid gap-2">
-                                <button id="start-bot" class="btn btn-primary">START BOT</button>
-                                <button id="stop-bot" class="btn btn-danger hidden">STOP BOT</button>
+                                <button id="start-bot" class="btn btn-primary btn-lg">
+                                    <i class="bi bi-rocket-takeoff"></i> START BOT
+                                </button>
+                                <button id="stop-bot" class="btn btn-danger btn-lg hidden">
+                                    <i class="bi bi-stop-circle"></i> STOP BOT
+                                </button>
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-            
-            <!-- Live Log Viewer -->
-            <div class="col-12">
-                <div class="card shadow mb-4">
-                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">Live Log</h5>
-                        <button id="clear-log" class="btn btn-sm btn-outline-light">Clear</button>
-                    </div>
-                    <div class="card-body p-0">
-                        <div id="log-container" class="log-container">
-                            <p class="log-line log-info">System initialized. Waiting for commands...</p>
+                    
+                    <!-- Live Log Viewer -->
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">
+                                <i class="bi bi-terminal"></i> Live Log
+                            </h5>
+                            <div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" id="auto-scroll" checked>
+                                    <label class="form-check-label" for="auto-scroll">Auto-scroll</label>
+                                </div>
+                                <button id="clear-log" class="btn btn-sm btn-outline-light ms-2">
+                                    <i class="bi bi-trash"></i> Clear
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="log-container" class="log-container"></div>
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Transaction History Modal -->
-    <div class="modal fade" id="txn-history-modal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-scrollable modal-lg">
-            <div class="modal-content">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title">Transaction History</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div id="loading-txns" class="text-center py-5">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Loading...</span>
+                
+                <!-- Transaction History Modal -->
+                <div class="modal fade" id="txn-history-modal" tabindex="-1" aria-labelledby="txnHistoryModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="txnHistoryModalLabel">Transaction History</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div id="txn-history-container">
+                                    <div class="text-center py-3" id="loading-txns">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <p class="mt-2">Loading transactions...</p>
+                                    </div>
+                                    <table class="table table-striped table-hover" id="txn-history-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Type</th>
+                                                <th>Amount</th>
+                                                <th>Date</th>
+                                                <th>Details</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="txn-history-body">
+                                        </tbody>
+                                    </table>
+                                    <div class="text-center py-3 hidden" id="no-txns-found">
+                                        <em>No transactions found</em>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
                         </div>
-                        <p class="mt-2">Loading transactions...</p>
                     </div>
-                    
-                    <div id="no-txns-found" class="text-center py-5 hidden">
-                        <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
-                        <p class="mt-2">No transactions found</p>
-                    </div>
-                    
-                    <div id="txn-history-content">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Type</th>
-                                    <th>Amount</th>
-                                    <th>Fee</th>
-                                    <th>Hash</th>
-                                </tr>
-                            </thead>
-                            <tbody id="txn-history-body">
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        // Connect to Socket.IO server
-        const socket = io();
-        
-        // DOM elements
-        const loginSection = document.getElementById('login-section');
-        const dashboardSection = document.getElementById('dashboard-section');
-        const passphraseInput = document.getElementById('passphrase');
-        const loginBtn = document.getElementById('login-btn');
-        const publicKeyEl = document.getElementById('public-key');
-        const availableBalanceEl = document.getElementById('available-balance');
-        const lockedBalancesList = document.getElementById('locked-balances-list');
-        const noLockedBalances = document.getElementById('no-locked-balances');
-        const refreshBalanceBtn = document.getElementById('refresh-balance-btn');
-        const showTxnHistoryBtn = document.getElementById('show-txn-history-btn');
-        const txnHistoryModal = new bootstrap.Modal(document.getElementById('txn-history-modal'));
-        const txnHistoryBody = document.getElementById('txn-history-body');
-        const noTxnsFound = document.getElementById('no-txns-found');
-        const loadingTxns = document.getElementById('loading-txns');
-        const startBotBtn = document.getElementById('start-bot');
-        const stopBotBtn = document.getElementById('stop-bot');
-        const targetAddressInput = document.getElementById('target-address');
-        const transferAmountInput = document.getElementById('transfer-amount');
-        const baseFeeInput = document.getElementById('base-fee');
-        const unlockTimeDisplay = document.getElementById('unlock-time-display');
-        const unlockTimeMs = document.getElementById('unlock-time-ms');
-        const logContainer = document.getElementById('log-container');
-        const clearLogBtn = document.getElementById('clear-log');
-        const networkTimeEl = document.getElementById('network-time');
-        const timeOffsetEl = document.getElementById('time-offset');
-        const syncTimeBtn = document.getElementById('sync-time-btn');
-        const countdownContainer = document.getElementById('countdown-container');
-        const countdownDisplay = document.getElementById('countdown-display');
-        const precisionStatus = document.getElementById('precision-status');
-        const precisionIndicator = document.getElementById('precision-indicator');
-        const precisionModeText = document.getElementById('precision-mode');
-        
-        // Make sure login is visible and dashboard is hidden on page load
         document.addEventListener('DOMContentLoaded', function() {
-            loginSection.classList.remove('hidden');
-            dashboardSection.classList.add('hidden');
-            
-            // Add stronger CSS rule for hidden class
-            const style = document.createElement('style');
-            style.textContent = '.hidden { display: none !important; }';
-            document.head.appendChild(style);
-        });
-        
-        // Store balances data
-        let lockedBalancesData = [];
-        let networkTimeOffset = 0;
-        let countdownInterval = null;
-        let precisionMode = 'normal'; // normal, high, ultra
-        
-        // Update network time display
-        function updateNetworkTimeDisplay() {
-            const now = new Date(Date.now() + networkTimeOffset);
-            networkTimeEl.textContent = now.toISOString().substr(11, 8);
-            
-            // Update countdown if active
-            if (unlockTimeMs.value) {
-                updateCountdown();
-            }
-        }
-        
-        // Start network time display update
-        setInterval(updateNetworkTimeDisplay, 1000);
-        
-        // Sync time button
-        syncTimeBtn.addEventListener('click', () => {
-            socket.emit('sync-network-time');
-            addLogEntry('Syncing time with Pi Network...', 'info');
-        });
-        
-        // Copy buttons
-        document.querySelectorAll('.copy-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const targetId = btn.getAttribute('data-target');
-                const targetEl = document.getElementById(targetId);
-                
-                // Copy to clipboard
-                navigator.clipboard.writeText(targetEl.textContent.trim())
-                    .then(() => {
-                        // Show temporary success state
-                        btn.classList.remove('bi-clipboard');
-                        btn.classList.add('bi-check-lg', 'text-success');
-                        
-                        setTimeout(() => {
-                            btn.classList.remove('bi-check-lg', 'text-success');
-                            btn.classList.add('bi-clipboard');
-                        }, 2000);
-                    })
-                    .catch(err => {
-                        console.error('Failed to copy:', err);
-                    });
-            });
-        });
-        
-        // Add log entry
-        function addLogEntry(message, type = 'info') {
-            const logLine = document.createElement('p');
-            logLine.className = `log-line log-${type}`;
-            
-            const timestamp = new Date().toLocaleTimeString('en-US', { 
-                hour12: false, 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit',
-                fractionalSecondDigits: 3
+            // Enable tooltips
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            const tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl);
             });
             
-            logLine.textContent = `[${timestamp}] ${message}`;
+            // Connect to Socket.IO
+            const socket = io();
             
-            logContainer.appendChild(logLine);
-            logContainer.scrollTop = logContainer.scrollHeight;
-        }
-        
-        // Format date for display
-        function formatDate(dateString) {
-            const date = new Date(dateString);
-            return date.toLocaleString();
-        }
-        
-        // Format transaction hash for display
-        function formatHash(hash) {
-            if (!hash) return '';
-            return `${hash.substring(0, 8)}...${hash.substring(hash.length - 4)}`;
-        }
-        
-        // Update locked balances display
-        function updateLockedBalancesDisplay() {
-            // Clear existing items
-            while (lockedBalancesList.firstChild) {
-                lockedBalancesList.removeChild(lockedBalancesList.firstChild);
+            // DOM Elements
+            const loginSection = document.getElementById('login-section');
+            const dashboardSection = document.getElementById('dashboard-section');
+            const loginForm = document.getElementById('login-form');
+            const publicKeyEl = document.getElementById('public-key');
+            const availableBalanceEl = document.getElementById('available-balance');
+            const refreshBalanceBtn = document.getElementById('refresh-balance');
+            const refreshLockedBalancesBtn = document.getElementById('refresh-locked-balances');
+            const lockedBalancesList = document.getElementById('locked-balances-list');
+            const noLockedBalances = document.getElementById('no-locked-balances');
+            const showTxnHistoryBtn = document.getElementById('show-txn-history');
+            const txnHistoryModal = new bootstrap.Modal(document.getElementById('txn-history-modal'));
+            const txnHistoryBody = document.getElementById('txn-history-body');
+            const noTxnsFound = document.getElementById('no-txns-found');
+            const loadingTxns = document.getElementById('loading-txns');
+            const startBotBtn = document.getElementById('start-bot');
+            const stopBotBtn = document.getElementById('stop-bot');
+            const targetAddressInput = document.getElementById('target-address');
+            const transferAmountInput = document.getElementById('transfer-amount');
+            const baseFeeSelect = document.getElementById('base-fee');
+            const customFeeContainer = document.getElementById('custom-fee-container');
+            const customFeeInput = document.getElementById('custom-fee');
+            const unlockTimeDisplay = document.getElementById('unlock-time-display');
+            const unlockTimeMs = document.getElementById('unlock-time-ms');
+            const logContainer = document.getElementById('log-container');
+            const clearLogBtn = document.getElementById('clear-log');
+            const autoScrollCheckbox = document.getElementById('auto-scroll');
+            const botStatusEl = document.getElementById('bot-status');
+            const countdownTimer = document.getElementById('countdown-timer');
+            const countdownValue = document.getElementById('countdown-value');
+            const highPrecisionTimingCheckbox = document.getElementById('high-precision-timing');
+            const redundantTimersCheckbox = document.getElementById('redundant-timers');
+            const networkStatusEl = document.getElementById('network-status');
+            const lastBlockEl = document.getElementById('last-block');
+            const systemTimeEl = document.getElementById('system-time');
+            const prepareProgressBar = document.getElementById('prepare-progress-bar');
+            const prepareProgressContainer = document.getElementById('prepare-progress-container');
+            
+            // Store balances data
+            let lockedBalancesData = [];
+            let updateCountdownInterval = null;
+            let networkCheckInterval = null;
+            let systemTimeInterval = null;
+            
+            // Update system time display
+            function updateSystemTime() {
+                const now = new Date();
+                systemTimeEl.textContent = now.toLocaleTimeString();
             }
             
-            if (lockedBalancesData.length === 0) {
-                noLockedBalances.classList.remove('hidden');
-                lockedBalancesList.appendChild(noLockedBalances);
-                return;
-            }
+            // Start system time updater
+            systemTimeInterval = setInterval(updateSystemTime, 1000);
+            updateSystemTime();
             
-            noLockedBalances.classList.add('hidden');
-            
-            // Sort by unlock time
-            lockedBalancesData.sort((a, b) => {
-                const timeA = new Date(a.unlockTime).getTime();
-                const timeB = new Date(b.unlockTime).getTime();
-                return timeA - timeB;
+            // Handle custom fee selection
+            baseFeeSelect.addEventListener('change', () => {
+                if (baseFeeSelect.value === 'custom') {
+                    customFeeContainer.classList.remove('hidden');
+                    customFeeInput.focus();
+                } else {
+                    customFeeContainer.classList.add('hidden');
+                }
             });
             
-            // Current time for checking unlock status
-            const now = Date.now() + networkTimeOffset;
+            // Copy buttons
+            document.querySelectorAll('.copy-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const targetId = btn.getAttribute('data-target');
+                    const targetEl = document.getElementById(targetId);
+                    navigator.clipboard.writeText(targetEl.textContent);
+                    
+                    // Show feedback
+                    const originalHTML = btn.innerHTML;
+                    btn.innerHTML = `<i class="bi bi-check2"></i>`;
+                    setTimeout(() => {
+                        btn.innerHTML = originalHTML;
+                    }, 1000);
+                });
+            });
             
-            lockedBalancesData.forEach((balance, index) => {
-                const item = document.createElement('div');
-                item.className = 'list-group-item d-flex justify-content-between align-items-center balance-item';
-                item.dataset.index = index;
+            // Login form submission
+            loginForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const passphrase = document.getElementById('passphrase').value.trim();
                 
-                const unlockTime = new Date(balance.unlockTime);
-                const unlockTimeFormatted = unlockTime.toLocaleString();
-                const isUnlocked = now >= unlockTime.getTime();
+                // Log message
+                addLogEntry('Validating passphrase...', 'info');
                 
-                const msUntilUnlock = unlockTime.getTime() - now;
-                let countdownText = '';
+                // Emit login event to server
+                socket.emit('login', { passphrase });
+            });
+            
+            // Refresh balance button
+            refreshBalanceBtn.addEventListener('click', () => {
+                socket.emit('refresh-balance');
+                addLogEntry('Refreshing balance...', 'info');
+            });
+            
+            // Refresh locked balances button
+            refreshLockedBalancesBtn.addEventListener('click', () => {
+                socket.emit('refresh-locked-balances');
+                addLogEntry('Refreshing locked balances...', 'info');
+            });
+            
+            // Show transaction history button
+            showTxnHistoryBtn.addEventListener('click', () => {
+                txnHistoryBody.innerHTML = '';
+                noTxnsFound.classList.add('hidden');
+                loadingTxns.classList.remove('hidden');
+                txnHistoryModal.show();
                 
-                if (msUntilUnlock > 0) {
-                    const seconds = Math.floor(msUntilUnlock / 1000) % 60;
-                    const minutes = Math.floor(msUntilUnlock / (1000 * 60)) % 60;
-                    const hours = Math.floor(msUntilUnlock / (1000 * 60 * 60));
-                    countdownText = `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+                // Emit get transaction history event
+                socket.emit('get-txn-history');
+            });
+            
+            // Start bot button
+            startBotBtn.addEventListener('click', () => {
+                const targetAddress = targetAddressInput.value.trim();
+                const transferAmount = transferAmountInput.value.trim() || null;
+                let baseFee;
+                
+                if (baseFeeSelect.value === 'custom') {
+                    baseFee = parseInt(customFeeInput.value.trim() || '3500000');
+                } else {
+                    baseFee = parseInt(baseFeeSelect.value);
                 }
                 
-                item.innerHTML = `
-                    <div>
-                        <h6 class="mb-0">${balance.amount} π</h6>
-                        <small class="text-muted">ID: ${balance.id.substring(0, 8)}...${balance.id.substring(balance.id.length - 8)}</small>
-                    </div>
-                    <div class="text-end">
-                        <div class="badge ${isUnlocked ? 'bg-success' : 'bg-warning'} rounded-pill">
-                            ${isUnlocked ? 'Unlocked' : countdownText || 'Locked'}
-                        </div>
-                        <div class="small">${unlockTimeFormatted}</div>
-                    </div>
-                `;
+                const unlockTime = unlockTimeMs.value ? parseInt(unlockTimeMs.value) : null;
+                const highPrecisionTiming = highPrecisionTimingCheckbox.checked;
+                const redundantTimers = redundantTimersCheckbox.checked;
                 
-                // Add click event to pre-populate the transfer fields
-                item.addEventListener('click', () => {
-                    // Clear previous selection
-                    document.querySelectorAll('.balance-item').forEach(el => {
-                        el.classList.remove('selected');
-                    });
-                    
-                    // Highlight this item
-                    item.classList.add('selected');
-                    
-                    // Set transfer amount
-                    transferAmountInput.value = balance.amount;
-                    
-                    // Set unlock time
-                    unlockTimeMs.value = unlockTime.getTime();
-                    
-                    // Update display
-                    if (isUnlocked) {
-                        unlockTimeDisplay.textContent = `${unlockTimeFormatted} (Already unlocked!)`;
-                        unlockTimeDisplay.classList.remove('text-primary');
-                        unlockTimeDisplay.classList.add('text-success');
-                    } else {
-                        unlockTimeDisplay.textContent = `${unlockTimeFormatted} (${countdownText} remaining)`;
-                        unlockTimeDisplay.classList.remove('text-success');
-                        unlockTimeDisplay.classList.add('text-primary');
-                    }
-                    
-                    // Show countdown if not already unlocked
-                    if (!isUnlocked) {
-                        countdownContainer.classList.remove('hidden');
-                        updateCountdown();
-                        
-                        // Set up countdown interval if not already running
-                        if (!countdownInterval) {
-                            countdownInterval = setInterval(updateCountdown, 10); // Update every 10ms for precision
-                        }
-                    } else {
-                        countdownContainer.classList.add('hidden');
-                        if (countdownInterval) {
-                            clearInterval(countdownInterval);
-                            countdownInterval = null;
-                        }
-                    }
-                    
-                    addLogEntry(`Selected balance: ${balance.amount} π (${isUnlocked ? 'Already unlocked' : 'Unlocks at ' + unlockTimeFormatted})`, 'info');
-                });
-                
-                lockedBalancesList.appendChild(item);
-            });
-        }
-        
-        // Update countdown display
-        function updateCountdown() {
-            if (!unlockTimeMs.value) return;
-            
-            const unlockTime = parseInt(unlockTimeMs.value);
-            const now = Date.now() + networkTimeOffset;
-            const timeRemaining = unlockTime - now;
-            
-            if (timeRemaining <= 0) {
-                countdownDisplay.textContent = "00:00:00.000";
-                countdownDisplay.classList.add('text-success');
-                precisionStatus.textContent = "Unlock time has passed!";
-                return;
-            }
-            
-            // Format time
-            const hours = Math.floor(timeRemaining / (1000 * 60 * 60));
-            const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000);
-            const milliseconds = timeRemaining % 1000;
-            
-            countdownDisplay.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
-            
-            // Update precision mode based on time remaining
-            if (timeRemaining <= 2000 && precisionMode !== 'ultra') {
-                precisionMode = 'ultra';
-                precisionIndicator.className = 'precision-indicator precision-ultra';
-                precisionModeText.textContent = 'Ultra Precision';
-                precisionStatus.textContent = "Ultra-precision timing active (10ms checks)";
-                countdownDisplay.classList.add('blinking');
-                
-                // Make the countdown text red when very close
-                countdownDisplay.classList.remove('text-primary');
-                countdownDisplay.classList.add('text-danger');
-            } else if (timeRemaining <= 10000 && precisionMode !== 'high' && precisionMode !== 'ultra') {
-                precisionMode = 'high';
-                precisionIndicator.className = 'precision-indicator precision-high';
-                precisionModeText.textContent = 'High Precision';
-                precisionStatus.textContent = "High-precision timing active (100ms checks)";
-                
-                // Make the countdown text orange when close
-                countdownDisplay.classList.remove('text-primary');
-                countdownDisplay.classList.add('text-warning');
-            } else if (timeRemaining > 10000 && precisionMode !== 'normal') {
-                precisionMode = 'normal';
-                precisionIndicator.className = 'precision-indicator precision-normal';
-                precisionModeText.textContent = 'Normal Mode';
-                precisionStatus.textContent = "Normal precision monitoring active";
-                countdownDisplay.classList.remove('blinking', 'text-danger', 'text-warning');
-                countdownDisplay.classList.add('text-primary');
-            }
-        }
-        
-        // Login button
-        loginBtn.addEventListener('click', () => {
-            const passphrase = passphraseInput.value.trim();
-            
-            if (!passphrase) {
-                alert('Please enter your recovery phrase');
-                return;
-            }
-            
-            // Disable login button during login attempt
-            loginBtn.disabled = true;
-            loginBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Logging in...';
-            
-            // Emit login event
-            socket.emit('login', { passphrase });
-            
-            addLogEntry('Attempting login...', 'info');
-        });
-        
-        // Refresh balance button
-        refreshBalanceBtn.addEventListener('click', () => {
-            socket.emit('refresh-balance');
-            addLogEntry('Refreshing balance...', 'info');
-        });
-        
-        // Show transaction history button
-        showTxnHistoryBtn.addEventListener('click', () => {
-            txnHistoryBody.innerHTML = '';
-            noTxnsFound.classList.add('hidden');
-            loadingTxns.classList.remove('hidden');
-            txnHistoryModal.show();
-            
-            // Emit get transaction history event
-            socket.emit('get-txn-history');
-        });
-        
-        // Start bot button
-        startBotBtn.addEventListener('click', () => {
-            const targetAddress = targetAddressInput.value.trim();
-            const transferAmount = transferAmountInput.value.trim() || null;
-            const baseFee = parseInt(baseFeeInput.value.trim() || '3200000');
-            const unlockTime = unlockTimeMs.value ? parseInt(unlockTimeMs.value) : null;
-            
-            if (!targetAddress) {
-                alert('Please enter a target address');
-                return;
-            }
-            
-            if (!unlockTime) {
-                const proceed = confirm('No unlock time selected. Do you want to execute the flood immediately?');
-                if (!proceed) {
+                if (!targetAddress) {
+                    alert('Please enter a target address');
                     return;
                 }
-            }
-            
-            // Emit start bot event
-            socket.emit('start-bot', {
-                targetAddress,
-                transferAmount,
-                baseFee,
-                unlockTime
+                
+                if (!unlockTime) {
+                    const proceed = confirm('No unlock time selected. Do you want to execute the flood immediately?');
+                    if (!proceed) {
+                        return;
+                    }
+                }
+                
+                // Update bot status
+                updateBotStatus('preparing');
+                
+                // Show progress bar animation
+                animateProgressBar(prepareProgressBar, 0, 100, 2000);
+                
+                // Emit start bot event
+                socket.emit('start-bot', {
+                    targetAddress,
+                    transferAmount,
+                    baseFee,
+                    unlockTime,
+                    highPrecisionTiming,
+                    redundantTimers
+                });
+                
+                startBotBtn.classList.add('hidden');
+                stopBotBtn.classList.remove('hidden');
+                
+                addLogEntry('Starting bot with advanced configuration...', 'info');
             });
             
-            startBotBtn.classList.add('hidden');
-            stopBotBtn.classList.remove('hidden');
-            
-            addLogEntry('Starting bot...', 'info');
-        });
-        
-        // Stop bot button
-        stopBotBtn.addEventListener('click', () => {
-            socket.emit('stop-bot');
-            stopBotBtn.classList.add('hidden');
-            startBotBtn.classList.remove('hidden');
-            
-            addLogEntry('Stopping bot...', 'info');
-        });
-        
-        // Clear log button
-        clearLogBtn.addEventListener('click', () => {
-            logContainer.innerHTML = '';
-        });
-        
-        // Socket.IO event handlers
-        socket.on('login-response', (data) => {
-            // Re-enable login button
-            loginBtn.disabled = false;
-            loginBtn.innerHTML = '<i class="bi bi-wallet2"></i> Login';
-            
-            if (data.success) {
-                loginSection.classList.add('hidden');
-                dashboardSection.classList.remove('hidden');
+            // Stop bot button
+            stopBotBtn.addEventListener('click', () => {
+                socket.emit('stop-bot');
+                stopBotBtn.classList.add('hidden');
+                startBotBtn.classList.remove('hidden');
                 
-                // Update wallet info
-                publicKeyEl.textContent = data.publicKey;
-                availableBalanceEl.textContent = `${data.balance} π`;
+                // Update bot status
+                updateBotStatus('standby');
                 
-                // Store and display locked balances
-                lockedBalancesData = data.lockedBalances || [];
-                updateLockedBalancesDisplay();
+                // Hide countdown timer
+                countdownTimer.classList.add('hidden');
                 
-                addLogEntry(`Login successful. Public Key: ${data.publicKey}`, 'success');
+                // Reset progress bar
+                prepareProgressBar.style.width = '0%';
                 
-                // Clear sensitive data from UI
-                passphraseInput.value = '';
-            } else {
-                addLogEntry(`Login failed: ${data.error}`, 'error');
-                alert(`Login failed: ${data.error}`);
-            }
-        });
-        
-        socket.on('balance-update', (data) => {
-            // Update balance display
-            availableBalanceEl.textContent = `${data.balance} π`;
+                addLogEntry('Stopping bot...', 'info');
+            });
             
-            // Store and display locked balances
-            lockedBalancesData = data.lockedBalances || [];
-            updateLockedBalancesDisplay();
+            // Clear log button
+            clearLogBtn.addEventListener('click', () => {
+                logContainer.innerHTML = '';
+            });
             
-            addLogEntry(`Balance updated: ${data.balance} π`, 'success');
-        });
-        
-        socket.on('txn-history', (data) => {
-            loadingTxns.classList.add('hidden');
-            
-            if (!data.transactions || data.transactions.length === 0) {
-                noTxnsFound.classList.remove('hidden');
-                return;
-            }
-            
-            // Clear existing transactions
-            txnHistoryBody.innerHTML = '';
-            
-            // Add transactions to the table
-            data.transactions.forEach(txn => {
-                const row = document.createElement('tr');
+            // Helper function to animate progress bar
+            function animateProgressBar(progressBar, startPercent, endPercent, duration) {
+                const startTime = performance.now();
                 
-                // Get operation details for display
-                let opType = 'Unknown';
-                let amount = '-';
-                
-                if (txn.operations && txn.operations.length > 0) {
-                    const mainOp = txn.operations[0];
-                    opType = mainOp.type.replace('_', ' ');
+                function updateProgress(currentTime) {
+                    const elapsedTime = currentTime - startTime;
                     
-                    if (mainOp.amount) {
-                        amount = `${mainOp.amount} ${mainOp.asset || ''}`;
+                    if (elapsedTime < duration) {
+                        const progress = startPercent + ((endPercent - startPercent) * (elapsedTime / duration));
+                        progressBar.style.width = `${progress}%`;
+                        requestAnimationFrame(updateProgress);
+                    } else {
+                        progressBar.style.width = `${endPercent}%`;
                     }
                 }
                 
-                row.innerHTML = `
-                    <td>${formatDate(txn.date)}</td>
-                    <td>${opType}</td>
-                    <td>${amount}</td>
-                    <td>${txn.fee} stroops</td>
-                    <td>
-                        <a href="https://explorer.minepi.com/transactions/${txn.hash}" target="_blank" title="${txn.hash}">
-                            ${formatHash(txn.hash)}
-                        </a>
-                    </td>
-                `;
-                
-                txnHistoryBody.appendChild(row);
-            });
-        });
-        
-        socket.on('log', (data) => {
-            addLogEntry(data.message, data.type);
+                requestAnimationFrame(updateProgress);
+            }
             
-            // Update network time offset if provided in the log
-            if (data.message.includes('Offset:')) {
-                try {
-                    const offsetMatch = data.message.match(/Offset:\s*([-\d]+)ms/);
-                    if (offsetMatch && offsetMatch[1]) {
-                        networkTimeOffset = parseInt(offsetMatch[1]);
-                        timeOffsetEl.textContent = networkTimeOffset;
-                    }
-                } catch (e) {
-                    // Ignore parse errors
+            // Helper function to update bot status display
+            function updateBotStatus(status) {
+                botStatusEl.className = 'status-badge';
+                
+                switch (status) {
+                    case 'standby':
+                        botStatusEl.classList.add('standby');
+                        botStatusEl.innerHTML = '<i class="bi bi-circle-fill"></i> Standby';
+                        break;
+                    case 'preparing':
+                        botStatusEl.classList.add('preparing');
+                        botStatusEl.innerHTML = '<i class="bi bi-gear-fill"></i> Preparing';
+                        break;
+                    case 'ready':
+                        botStatusEl.classList.add('ready');
+                        botStatusEl.innerHTML = '<i class="bi bi-check-circle-fill"></i> Ready';
+                        break;
+                    case 'executing':
+                        botStatusEl.classList.add('executing');
+                        botStatusEl.innerHTML = '<i class="bi bi-lightning-fill"></i> Executing';
+                        break;
+                    default:
+                        botStatusEl.classList.add('standby');
+                        botStatusEl.innerHTML = '<i class="bi bi-circle-fill"></i> Standby';
                 }
             }
-        });
-        
-        // Update countdown for all locked balances
-        setInterval(() => {
-            const now = Date.now() + networkTimeOffset;
-            let needsUpdate = false;
             
-            document.querySelectorAll('.balance-item').forEach(item => {
-                const index = parseInt(item.dataset.index);
-                const balance = lockedBalancesData[index];
-                if (!balance) return;
+            // Helper function to format time
+            function formatTime(ms) {
+                if (ms < 0) return "00:00:00";
                 
-                const unlockTime = new Date(balance.unlockTime).getTime();
-                const msUntilUnlock = unlockTime - now;
+                const totalSeconds = Math.floor(ms / 1000);
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
                 
-                if (msUntilUnlock <= 0) {
-                    // Balance just became unlocked
-                    if (!item.querySelector('.badge').classList.contains('bg-success')) {
-                        needsUpdate = true;
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+            
+            // Socket.IO event handlers
+            socket.on('login-response', (data) => {
+                if (data.success) {
+                    loginSection.classList.add('hidden');
+                    dashboardSection.classList.remove('hidden');
+                    
+                    // Update wallet info
+                    publicKeyEl.textContent = data.publicKey;
+                    availableBalanceEl.textContent = `${data.balance} π`;
+                    
+                    addLogEntry(`Login successful. Welcome back!`, 'success');
+                    
+                    // Store and display locked balances
+                    if (data.lockedBalances && data.lockedBalances.length > 0) {
+                        lockedBalancesData = data.lockedBalances;
+                        updateLockedBalancesDisplay();
+                    }
+                    
+                    // Start network checking
+                    startNetworkChecking();
+                } else {
+                    addLogEntry(`Login failed: ${data.error}`, 'error');
+                }
+            });
+            
+            // Start network checking
+            function startNetworkChecking() {
+                if (networkCheckInterval) {
+                    clearInterval(networkCheckInterval);
+                }
+                
+                // Check network connectivity
+                networkCheckInterval = setInterval(() => {
+                    // Ping server to check connection
+                    socket.emit('get-bot-status');
+                }, 5000);
+            }
+            
+            socket.on('balance-updated', (data) => {
+                availableBalanceEl.textContent = `${data.balance} π`;
+                addLogEntry(`Balance updated: ${data.balance} π`, 'info');
+                
+                // Update locked balances if provided
+                if (data.lockedBalances) {
+                    lockedBalancesData = data.lockedBalances;
+                    updateLockedBalancesDisplay();
+                }
+            });
+            
+            socket.on('locked-balances-updated', (data) => {
+                if (data.lockedBalances) {
+                    lockedBalancesData = data.lockedBalances;
+                    updateLockedBalancesDisplay();
+                }
+            });
+            
+            socket.on('bot-status-update', (status) => {
+                // Update network status - if we're getting updates, we're connected
+                networkStatusEl.innerHTML = '<i class="bi bi-wifi"></i> Connected';
+                networkStatusEl.className = 'badge bg-success me-2';
+                
+                // Update last block if provided
+                if (status.lastLedgerTime) {
+                    const blockTime = new Date(status.lastLedgerTime).toLocaleTimeString();
+                    lastBlockEl.textContent = `Block #${status.latestLedgerNum} at ${blockTime}`;
+                }
+                
+                // Update bot status display
+                if (status.isRunning) {
+                    if (status.floodExecuted) {
+                        updateBotStatus('executing');
+                    } else if (status.isPrepared) {
+                        updateBotStatus('ready');
+                    } else if (status.isExecuting) {
+                        updateBotStatus('executing');
+                    } else {
+                        updateBotStatus('preparing');
+                    }
+                    
+                    // Show transaction counts if available
+                    if (status.successCount > 0 || status.failureCount > 0) {
+                        addLogEntry(`Transactions: ${status.successCount} successful, ${status.failureCount} failed`, 'info');
+                    }
+                    
+                    // Update countdown if unlock time is set
+                    if (status.unlockTime && !status.floodExecuted) {
+                        const now = Date.now();
+                        const unlockTime = new Date(status.unlockTime).getTime();
+                        const timeToUnlock = unlockTime - now;
+                        
+                        if (timeToUnlock > 0) {
+                            countdownTimer.classList.remove('hidden');
+                            countdownValue.textContent = formatTime(timeToUnlock);
+                            
+                            // Start countdown timer if not already running
+                            if (!updateCountdownInterval) {
+                                startCountdownTimer(unlockTime);
+                            }
+                        }
                     }
                 } else {
-                    // Update countdown
-                    const seconds = Math.floor(msUntilUnlock / 1000) % 60;
-                    const minutes = Math.floor(msUntilUnlock / (1000 * 60)) % 60;
-                    const hours = Math.floor(msUntilUnlock / (1000 * 60 * 60));
-                    const countdownText = `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+                    updateBotStatus('standby');
                     
-                    const badge = item.querySelector('.badge');
-                    if (badge && badge.textContent !== countdownText) {
-                        badge.textContent = countdownText;
+                    // Hide countdown timer
+                    countdownTimer.classList.add('hidden');
+                    
+                    // Clear countdown interval
+                    if (updateCountdownInterval) {
+                        clearInterval(updateCountdownInterval);
+                        updateCountdownInterval = null;
                     }
                 }
             });
             
-            // If any balance changed state, refresh the whole list
-            if (needsUpdate) {
-                updateLockedBalancesDisplay();
+            // Start countdown timer
+            function startCountdownTimer(unlockTime) {
+                if (updateCountdownInterval) {
+                    clearInterval(updateCountdownInterval);
+                }
+                
+                updateCountdownInterval = setInterval(() => {
+                    const now = Date.now();
+                    const timeToUnlock = unlockTime - now;
+                    
+                    if (timeToUnlock <= 0) {
+                        countdownValue.textContent = "00:00:00";
+                        countdownValue.classList.add('text-danger');
+                        
+                        // Don't clear the interval, let the bot status update handle it
+                    } else {
+                        countdownValue.textContent = formatTime(timeToUnlock);
+                        
+                        // Change color when getting close
+                        if (timeToUnlock < 10000) { // 10 seconds
+                            countdownValue.classList.add('text-danger');
+                        } else if (timeToUnlock < 60000) { // 1 minute
+                            countdownValue.classList.add('text-warning');
+                        }
+                    }
+                }, 100); // Update every 100ms for more precision
             }
             
-            // Also update the selected unlock time countdown if present
-            if (unlockTimeMs.value) {
-                const selectedTime = parseInt(unlockTimeMs.value);
-                const msUntilSelected = selectedTime - now;
+            socket.on('txn-history', (data) => {
+                loadingTxns.classList.add('hidden');
                 
-                if (msUntilSelected <= 0 && !unlockTimeDisplay.classList.contains('text-success')) {
-                    unlockTimeDisplay.textContent = `${new Date(selectedTime).toLocaleString()} (Already unlocked!)`;
-                    unlockTimeDisplay.classList.remove('text-primary');
-                    unlockTimeDisplay.classList.add('text-success');
+                if (data.transactions && data.transactions.length > 0) {
+                    txnHistoryBody.innerHTML = '';
+                    data.transactions.forEach(txn => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><span class="badge ${txn.type === 'Received' ? 'bg-success' : txn.type === 'Sent' ? 'bg-primary' : 'bg-secondary'}">${txn.type}</span></td>
+                            <td>${txn.amount}</td>
+                            <td>${new Date(txn.date).toLocaleString()}</td>
+                            <td><a href="${txn.link}" target="_blank" class="btn btn-sm btn-outline-primary">View</a></td>
+                        `;
+                        txnHistoryBody.appendChild(row);
+                    });
+                } else {
+                    noTxnsFound.classList.remove('hidden');
+                }
+            });
+            
+            socket.on('log', (data) => {
+                addLogEntry(data.message, data.type || 'info');
+            });
+            
+            // Socket connection events
+            socket.on('connect', () => {
+                networkStatusEl.innerHTML = '<i class="bi bi-wifi"></i> Connected';
+                networkStatusEl.className = 'badge bg-success me-2';
+            });
+            
+            socket.on('disconnect', () => {
+                networkStatusEl.innerHTML = '<i class="bi bi-wifi-off"></i> Disconnected';
+                networkStatusEl.className = 'badge bg-danger me-2';
+            });
+            
+            socket.on('connect_error', () => {
+                networkStatusEl.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Connection Error';
+                networkStatusEl.className = 'badge bg-warning me-2';
+            });
+            
+            // Helper function to update locked balances display
+            function updateLockedBalancesDisplay() {
+                lockedBalancesList.innerHTML = '';
+                
+                if (lockedBalancesData.length === 0) {
+                    noLockedBalances.classList.remove('hidden');
+                    return;
+                }
+                
+                noLockedBalances.classList.add('hidden');
+                
+                // Sort balances by unlock time (nearest first)
+                lockedBalancesData.sort((a, b) => {
+                    const timeA = new Date(a.unlockTime).getTime();
+                    const timeB = new Date(b.unlockTime).getTime();
+                    return timeA - timeB;
+                });
+                
+                lockedBalancesData.forEach((balance, index) => {
+                    const item = document.createElement('div');
+                    item.className = 'list-group-item d-flex justify-content-between align-items-center balance-item';
+                    item.dataset.index = index;
+                    
+                    const unlockTime = new Date(balance.unlockTime);
+                    const unlockTimeFormatted = unlockTime.toLocaleString();
+                    const now = new Date().getTime();
+                    const isUnlocked = now >= unlockTime.getTime();
+                    
+                    const msUntilUnlock = unlockTime.getTime() - now;
+                    let countdownText = '';
+                    
+                    if (msUntilUnlock > 0) {
+                        const seconds = Math.floor(msUntilUnlock / 1000) % 60;
+                        const minutes = Math.floor(msUntilUnlock / (1000 * 60)) % 60;
+                        const hours = Math.floor(msUntilUnlock / (1000 * 60 * 60));
+                        countdownText = `${hours}h ${minutes}m ${seconds}s`;
+                    }
+                    
+                    item.innerHTML = `
+                        <div>
+                            <h6>${balance.amount} π</h6>
+                            <small class="text-muted">ID: ${balance.id.substring(0, 8)}...${balance.id.substring(balance.id.length - 8)}</small>
+                        </div>
+                        <div class="text-end">
+                            <div class="badge bg-${isUnlocked ? 'success' : 'warning'} rounded-pill">
+                                ${isUnlocked ? 'Unlocked' : countdownText || 'Locked'}
+                            </div>
+                            <div class="small">${unlockTimeFormatted}</div>
+                        </div>
+                    `;
+                    
+                    // Add click event to pre-populate the transfer fields
+                    item.addEventListener('click', () => {
+                        // Set transfer amount
+                        transferAmountInput.value = balance.amount;
+                        
+                        // Set unlock time (hidden field)
+                        const unlockTimeValue = unlockTime.getTime();
+                        unlockTimeMs.value = unlockTimeValue;
+                        
+                        // Update display
+                        if (isUnlocked) {
+                            unlockTimeDisplay.textContent = `${unlockTimeFormatted} (Already unlocked!)`;
+                            unlockTimeDisplay.classList.remove('text-primary');
+                            unlockTimeDisplay.classList.add('text-success');
+                        } else {
+                            unlockTimeDisplay.textContent = `${unlockTimeFormatted} (${countdownText} remaining)`;
+                            unlockTimeDisplay.classList.remove('text-success');
+                            unlockTimeDisplay.classList.add('text-primary');
+                        }
+                        
+                        // Highlight the selected item
+                        document.querySelectorAll('.balance-item').forEach(el => {
+                            el.classList.remove('selected');
+                        });
+                        item.classList.add('selected');
+                        
+                        addLogEntry(`Selected balance: ${balance.amount} π (${isUnlocked ? 'Already unlocked' : 'Unlocks at ' + unlockTimeFormatted})`, 'info');
+                    });
+                    
+                    lockedBalancesList.appendChild(item);
+                });
+                
+                // Update countdown every second for locked balances
+                if (window.countdownInterval) {
+                    clearInterval(window.countdownInterval);
+                }
+                
+                window.countdownInterval = setInterval(() => {
+                    const now = new Date().getTime();
+                    let needsUpdate = false;
+                    
+                    document.querySelectorAll('.balance-item').forEach(item => {
+                        const index = parseInt(item.dataset.index);
+                        const balance = lockedBalancesData[index];
+                        if (!balance) return;
+                        
+                        const unlockTime = new Date(balance.unlockTime).getTime();
+                        const msUntilUnlock = unlockTime - now;
+                        
+                        if (msUntilUnlock <= 0) {
+                            // Balance just became unlocked
+                            if (!item.querySelector('.badge').classList.contains('bg-success')) {
+                                needsUpdate = true;
+                            }
+                        } else {
+                            // Update countdown
+                            const seconds = Math.floor(msUntilUnlock / 1000) % 60;
+                            const minutes = Math.floor(msUntilUnlock / (1000 * 60)) % 60;
+                            const hours = Math.floor(msUntilUnlock / (1000 * 60 * 60));
+                            const countdownText = `${hours}h ${minutes}m ${seconds}s`;
+                            
+                            const badge = item.querySelector('.badge');
+                            if (badge.textContent !== countdownText) {
+                                badge.textContent = countdownText;
+                            }
+                        }
+                    });
+                    
+                    // If any balance changed state, refresh the whole list
+                    if (needsUpdate) {
+                        updateLockedBalancesDisplay();
+                    }
+                    
+                    // Also update the selected unlock time countdown if present
+                    if (unlockTimeMs.value) {
+                        const selectedTime = parseInt(unlockTimeMs.value);
+                        const msUntilSelected = selectedTime - now;
+                        
+                        if (msUntilSelected <= 0 && !unlockTimeDisplay.classList.contains('text-success')) {
+                            unlockTimeDisplay.textContent = `${new Date(selectedTime).toLocaleString()} (Already unlocked!)`;
+                            unlockTimeDisplay.classList.remove('text-primary');
+                            unlockTimeDisplay.classList.add('text-success');
+                        } else if (msUntilSelected > 0) {
+                            const seconds = Math.floor(msUntilSelected / 1000) % 60;
+                            const minutes = Math.floor(msUntilSelected / (1000 * 60)) % 60;
+                            const hours = Math.floor(msUntilSelected / (1000 * 60 * 60));
+                            const countdownText = `${hours}h ${minutes}m ${seconds}s`;
+                            
+                            unlockTimeDisplay.textContent = `${new Date(selectedTime).toLocaleString()} (${countdownText} remaining)`;
+                        }
+                    }
+                }, 1000);
+            }
+            
+            // Helper function to add log entries
+            function addLogEntry(message, type = 'info') {
+                const entry = document.createElement('div');
+                entry.className = `log-entry ${type}`;
+                
+                // Get current time
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+                
+                entry.innerHTML = `[${timeStr}] ${message}`;
+                
+                logContainer.appendChild(entry);
+                
+                // Auto-scroll if enabled
+                if (autoScrollCheckbox.checked) {
+                    logContainer.scrollTop = logContainer.scrollHeight;
                 }
             }
-        }, 1000);
-        
-        // Initial log entry
-        addLogEntry('Enhanced Pi Transfer Flood Bot initialized', 'info');
+        });
     </script>
 </body>
 </html>
