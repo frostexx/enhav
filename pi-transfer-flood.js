@@ -39,8 +39,8 @@ class HighPerformanceEventEmitter extends EventEmitter {
 
 class PiNetworkTransferFloodBot {
     constructor({
-        horizonUrl = 'https://api.testnet.minepi.com',
-        networkPassphrase = 'Pi Testnet',
+        horizonUrl = 'https://api.mainnet.minepi.com',
+        networkPassphrase = 'Pi Network',
         sourcePassphrase = null,
         targetAddress = null,
         transferAmount = null,
