@@ -1,8 +1,11 @@
 /**
- * Enhanced Pi Network Transfer Flood Bot Server
+ * Ultra-Enhanced Pi Network Transfer Flood Bot Server
  * 
- * Optimized server implementation with improved error handling,
- * rate limiting, real-time status updates, and performance enhancements.
+ * High-performance server implementation with nanosecond-precision timing,
+ * advanced error recovery, optimized network connections, and
+ * intelligent rate limiting to outperform competing bots written in Rust and Go.
+ * 
+ * Version 3.0.0
  */
 const express = require('express');
 const http = require('http');
@@ -12,15 +15,62 @@ const PiNetworkTransferFloodBot = require('./pi-transfer-flood');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const axios = require('axios');
+const https = require('https');
+const { performance } = require('perf_hooks');
 
-// Initialize Express app
+// Initialize Express app with optimized settings
 const app = express();
-const server = http.createServer(app);
-const io = socketIO(server);
+const server = http.createServer({
+    // HTTP server optimization options
+    maxHeaderSize: 16384, // 16KB
+    keepAliveTimeout: 30000, // 30 seconds
+    headersTimeout: 60000, // 60 seconds
+    requestTimeout: 30000, // 30 seconds
+}, app);
+
+// Socket.IO with optimized settings
+const io = socketIO(server, {
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    transports: ['websocket', 'polling'],
+    cors: {
+        origin: '*'
+    }
+});
 
 // Performance optimization: increase max listeners to avoid warnings
-server.setMaxListeners(50);
-process.setMaxListeners(50);
+server.setMaxListeners(100);
+process.setMaxListeners(100);
+
+// System optimization
+if (process.env.NODE_ENV === 'production') {
+    // Optimize Node.js for production
+    process.env.UV_THREADPOOL_SIZE = Math.max(4, os.cpus().length);
+    
+    // Increase memory limits for v8
+    if (typeof v8 !== 'undefined' && v8.setFlagsFromString) {
+        v8.setFlagsFromString('--max-old-space-size=4096');
+    }
+}
+
+// Create optimized HTTP client for external requests
+const httpAgent = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 3000,
+    maxSockets: 20,
+    maxFreeSockets: 10,
+    timeout: 30000,
+});
+
+const axiosInstance = axios.create({
+    httpsAgent: httpAgent,
+    timeout: 30000,
+    headers: {
+        'Connection': 'keep-alive',
+        'User-Agent': 'PiNetworkTransferFloodBot/3.0.0'
+    }
+});
 
 // Ensure public directory exists
 const publicDir = path.join(__dirname, 'public');
@@ -29,8 +79,18 @@ if (!fs.existsSync(publicDir)){
     console.log('Created public directory');
 }
 
-// Serve static files from the public directory
-app.use(express.static(publicDir));
+// Serve static files with optimized settings
+app.use(express.static(publicDir, {
+    maxAge: 86400000, // 1 day cache
+    etag: true,
+    lastModified: true
+}));
+
+// Parse JSON with increased limits
+app.use(express.json({
+    limit: '1mb', // Increased limit
+    strict: true
+}));
 
 // Serve the main HTML file
 app.get('/', (req, res) => {
@@ -41,14 +101,26 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
     res.json({
         status: 'up',
-        version: '2.0.0',
+        version: '3.0.0',
         timestamp: new Date().toISOString(),
         system: {
             uptime: process.uptime(),
             memory: process.memoryUsage(),
             cpus: os.cpus().length,
-            load: os.loadavg()
+            load: os.loadavg(),
+            platform: os.platform(),
+            arch: os.arch(),
+            nodejs: process.version
         }
+    });
+});
+
+// Time synchronization endpoint to help clients sync their clocks
+app.get('/api/time', (req, res) => {
+    const serverTime = Date.now();
+    res.json({
+        serverTime,
+        timestamp: new Date(serverTime).toISOString()
     });
 });
 
@@ -61,46 +133,124 @@ let botActivityInterval = null;
 // Rate limiting for API requests
 const apiRateLimiter = {
     lastRequestTime: 0,
-    minTimeBetweenRequests: 500, // ms
+    minTimeBetweenRequests: 250, // ms
+    rateLimitedEndpoints: new Map(), // Track rate limiting by endpoint
     
-    async limit() {
+    async limit(endpoint = 'general') {
         const now = Date.now();
-        const timeSinceLastRequest = now - this.lastRequestTime;
         
+        // Get endpoint data or create new
+        const endpointData = this.rateLimitedEndpoints.get(endpoint) || {
+            lastRequestTime: 0,
+            consecutiveErrors: 0,
+            lastErrorTime: 0,
+            backoffDelay: 500
+        };
+        
+        // General rate limiting
+        const timeSinceLastRequest = now - this.lastRequestTime;
         if (timeSinceLastRequest < this.minTimeBetweenRequests) {
             await new Promise(resolve => 
                 setTimeout(resolve, this.minTimeBetweenRequests - timeSinceLastRequest)
             );
         }
         
+        // Endpoint-specific rate limiting
+        const timeSinceLastEndpointRequest = now - endpointData.lastRequestTime;
+        const endpointMinTime = endpointData.consecutiveErrors > 0 ? 
+            Math.min(500 * Math.pow(1.5, endpointData.consecutiveErrors), 5000) : 500;
+            
+        if (timeSinceLastEndpointRequest < endpointMinTime) {
+            await new Promise(resolve => 
+                setTimeout(resolve, endpointMinTime - timeSinceLastEndpointRequest)
+            );
+        }
+        
+        // Update timestamps
         this.lastRequestTime = Date.now();
+        endpointData.lastRequestTime = Date.now();
+        this.rateLimitedEndpoints.set(endpoint, endpointData);
+    },
+    
+    recordError(endpoint = 'general') {
+        const endpointData = this.rateLimitedEndpoints.get(endpoint) || {
+            lastRequestTime: 0,
+            consecutiveErrors: 0,
+            lastErrorTime: 0,
+            backoffDelay: 500
+        };
+        
+        endpointData.consecutiveErrors++;
+        endpointData.lastErrorTime = Date.now();
+        this.rateLimitedEndpoints.set(endpoint, endpointData);
+    },
+    
+    recordSuccess(endpoint = 'general') {
+        const endpointData = this.rateLimitedEndpoints.get(endpoint);
+        if (endpointData) {
+            endpointData.consecutiveErrors = 0;
+            this.rateLimitedEndpoints.set(endpoint, endpointData);
+        }
     }
 };
 
 /**
- * Rate-limited API request with exponential backoff retry
+ * Rate-limited API request with exponential backoff retry and enhanced error handling
  */
-async function rateLimitedRequest(fn, maxRetries = 5, initialDelay = 1000) {
+async function rateLimitedRequest(fn, endpoint = 'general', maxRetries = 5, initialDelay = 1000) {
     let retries = 0;
     
     while (retries <= maxRetries) {
         try {
             // Apply rate limiting before making request
-            await apiRateLimiter.limit();
+            await apiRateLimiter.limit(endpoint);
             
-            // Make the request
-            return await fn();
+            // Execute the function
+            const result = await fn();
+            
+            // Record success
+            apiRateLimiter.recordSuccess(endpoint);
+            
+            return result;
         } catch (error) {
+            // Check if it's a rate limiting error
+            let isRateLimited = false;
+            
             if (error.response && error.response.status === 429) {
-                // Too Many Requests error
+                isRateLimited = true;
+            } else if (error.message && (
+                error.message.includes('Too Many Requests') ||
+                error.message.includes('rate limit') ||
+                error.message.includes('429')
+            )) {
+                isRateLimited = true;
+            }
+            
+            if (isRateLimited) {
                 retries++;
+                
+                // Record error
+                apiRateLimiter.recordError(endpoint);
+                
                 if (retries > maxRetries) {
                     throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
                 }
                 
-                // Calculate delay with exponential backoff
-                const delay = initialDelay * Math.pow(2, retries - 1);
-                console.log(`Rate limited. Retrying after ${delay}ms (attempt ${retries}/${maxRetries})`);
+                // Calculate delay with smart exponential backoff
+                const baseDelay = initialDelay;
+                const exponentialFactor = 1.5;
+                const randomFactor = 0.2; // Add jitter to prevent synchronized retries
+                
+                let delay = baseDelay * Math.pow(exponentialFactor, retries - 1);
+                
+                // Add jitter (+/- 20%)
+                const jitter = delay * randomFactor * (Math.random() * 2 - 1);
+                delay = Math.max(baseDelay, delay + jitter);
+                
+                // Cap maximum delay
+                delay = Math.min(delay, 10000); // 10 second max
+                
+                console.log(`Rate limited on ${endpoint}. Retrying after ${delay.toFixed(0)}ms (attempt ${retries}/${maxRetries})`);
                 
                 // Wait before retrying
                 await new Promise(resolve => setTimeout(resolve, delay));
@@ -112,7 +262,92 @@ async function rateLimitedRequest(fn, maxRetries = 5, initialDelay = 1000) {
     }
 }
 
-// Helper function to get locked balances for an account with enhanced error handling
+// Enhanced account loading with multi-stage fallback mechanisms
+async function loadAccountWithFallback(publicKey) {
+    // Record performance start time
+    const startTime = performance.now();
+    
+    // Create Stellar servers with optimized settings
+    const servers = [
+        new StellarSdk.Server('https://api.mainnet.minepi.com'),
+        new StellarSdk.Server('https://api.mainnet.minepi.com')
+    ];
+    
+    // Try with rate limiting and retries first
+    try {
+        console.log('Loading account with rate limiting...');
+        const account = await rateLimitedRequest(
+            () => servers[0].loadAccount(publicKey),
+            'loadAccount',
+            5,  // 5 retries maximum
+            2000 // 2 second initial delay
+        );
+        
+        console.log(`Account loaded successfully in ${(performance.now() - startTime).toFixed(2)}ms`);
+        return account;
+    } catch (primaryError) {
+        console.warn(`Failed with rate limiting: ${primaryError.message}`);
+        
+        // Try direct HTTP request as fallback
+        try {
+            console.log('Trying direct HTTP request...');
+            const accountUrl = `https://api.mainnet.minepi.com/accounts/${publicKey}`;
+            const response = await axiosInstance.get(accountUrl);
+            
+            if (response.data) {
+                console.log(`Account loaded via direct HTTP in ${(performance.now() - startTime).toFixed(2)}ms`);
+                return response.data;
+            }
+        } catch (httpError) {
+            console.warn(`Direct HTTP request failed: ${httpError.message}`);
+        }
+        
+        // Try all servers sequentially with delays
+        for (let i = 0; i < servers.length; i++) {
+            try {
+                // Add delay between attempts
+                if (i > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                }
+                
+                console.log(`Trying server ${i+1}...`);
+                const account = await servers[i].loadAccount(publicKey);
+                console.log(`Account loaded from server ${i+1} in ${(performance.now() - startTime).toFixed(2)}ms`);
+                return account;
+            } catch (error) {
+                console.warn(`Failed to load account from server ${i+1}: ${error.message}`);
+            }
+        }
+        
+        // Final attempt with extended timeout
+        try {
+            console.log('Making final attempt with extended timeout...');
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            const extendedAxios = axios.create({
+                timeout: 60000, // 60 second timeout
+                httpsAgent: new https.Agent({
+                    keepAlive: true,
+                    timeout: 60000
+                })
+            });
+            
+            const accountUrl = `https://api.mainnet.minepi.com/accounts/${publicKey}`;
+            const response = await extendedAxios.get(accountUrl);
+            
+            if (response.data) {
+                console.log(`Account loaded via extended timeout in ${(performance.now() - startTime).toFixed(2)}ms`);
+                return response.data;
+            }
+        } catch (finalError) {
+            console.error(`Final attempt failed: ${finalError.message}`);
+        }
+        
+        throw new Error('Failed to load account from any source after multiple attempts');
+    }
+}
+
+// Helper function to get locked balances with enhanced error handling
 async function getLockedBalances(publicKey) {
     try {
         // Create server instance
@@ -125,65 +360,34 @@ async function getLockedBalances(publicKey) {
             // Get claimable balances with rate limiting
             const claimableBalances = await rateLimitedRequest(
                 () => server.claimableBalances().claimant(publicKey).limit(100).call(),
+                'getClaimableBalances',
                 3,
                 2000
             );
                 
-            return claimableBalances.records.map(balance => {
-                let unlockTime = null;
-                let amount = '0';
-                
-                // Parse the claimable balance details
-                if (balance.claimants && balance.claimants.length > 0) {
-                    const claimant = balance.claimants.find(c => c.destination === publicKey);
-                    if (claimant && claimant.predicate.not && claimant.predicate.not.abs_before) {
-                        unlockTime = new Date(claimant.predicate.not.abs_before).toISOString();
-                    }
-                }
-                
-                // Parse amount
-                if (balance.asset === 'native') {
-                    amount = balance.amount;
-                }
-                
-                return {
-                    id: balance.id,
-                    amount,
-                    unlockTime: unlockTime || new Date().toISOString(), // Default to now if no unlock time found
-                    claimants: balance.claimants || []
-                };
-            });
+            return processLockedBalances(claimableBalances);
         } catch (error) {
             console.error('Error fetching locked balances with rate limiting:', error);
             
-            // Fallback to direct fetch with delay
-            console.log('Trying direct fetch with delay...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Try direct HTTP request as fallback
+            try {
+                console.log('Trying direct HTTP request for locked balances...');
+                const balancesUrl = `https://api.mainnet.minepi.com/claimable_balances?claimant=${publicKey}&limit=100`;
+                const response = await axiosInstance.get(balancesUrl);
+                
+                if (response.data && response.data._embedded && response.data._embedded.records) {
+                    return processLockedBalances({ records: response.data._embedded.records });
+                }
+            } catch (httpError) {
+                console.warn(`Direct HTTP request for balances failed: ${httpError.message}`);
+            }
+            
+            // Fallback to standard fetch with delay
+            console.log('Trying standard fetch with delay...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
             
             const claimableBalances = await server.claimableBalances().claimant(publicKey).limit(100).call();
-            
-            return claimableBalances.records.map(balance => {
-                let unlockTime = null;
-                let amount = '0';
-                
-                if (balance.claimants && balance.claimants.length > 0) {
-                    const claimant = balance.claimants.find(c => c.destination === publicKey);
-                    if (claimant && claimant.predicate.not && claimant.predicate.not.abs_before) {
-                        unlockTime = new Date(claimant.predicate.not.abs_before).toISOString();
-                    }
-                }
-                
-                if (balance.asset === 'native') {
-                    amount = balance.amount;
-                }
-                
-                return {
-                    id: balance.id,
-                    amount,
-                    unlockTime: unlockTime || new Date().toISOString(),
-                    claimants: balance.claimants || []
-                };
-            });
+            return processLockedBalances(claimableBalances);
         }
     } catch (error) {
         console.error('Error fetching locked balances:', error);
@@ -191,56 +395,45 @@ async function getLockedBalances(publicKey) {
     }
 }
 
-// Enhanced account loading with rate limiting
-async function loadAccountWithFallback(publicKey) {
-    const server = new StellarSdk.Server('https://api.mainnet.minepi.com');
+// Process locked balances response
+function processLockedBalances(claimableBalances) {
+    if (!claimableBalances || !claimableBalances.records) {
+        return [];
+    }
     
-    // Try with rate limiting and retries
-    try {
-        console.log('Loading account with rate limiting...');
-        return await rateLimitedRequest(
-            () => server.loadAccount(publicKey),
-            5,  // 5 retries maximum
-            2000 // 2 second initial delay
-        );
-    } catch (error) {
-        console.warn(`Failed with rate limiting: ${error.message}`);
+    return claimableBalances.records.map(balance => {
+        let unlockTime = null;
+        let amount = '0';
         
-        // Fallback to basic attempts with delays
-        const servers = [
-            new StellarSdk.Server('https://api.mainnet.minepi.com'),
-            new StellarSdk.Server('https://api.mainnet.minepi.com')
-        ];
-        
-        let account = null;
-        let lastError = null;
-        
-        for (let i = 0; i < servers.length; i++) {
-            try {
-                // Add delay between attempts
-                if (i > 0) {
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-                }
-                
-                account = await servers[i].loadAccount(publicKey);
-                if (account) {
-                    return account;
-                }
-            } catch (error) {
-                lastError = error;
-                console.warn(`Failed to load account from server ${i+1}: ${error.message}`);
+        // Parse the claimable balance details
+        if (balance.claimants && balance.claimants.length > 0) {
+            const claimant = balance.claimants.find(c => c.destination === publicKey);
+            if (claimant && claimant.predicate.not && claimant.predicate.not.abs_before) {
+                unlockTime = new Date(claimant.predicate.not.abs_before).toISOString();
             }
         }
         
-        throw lastError || new Error('Failed to load account from any server');
-    }
+        // Parse amount
+        if (balance.asset === 'native') {
+            amount = balance.amount;
+        }
+        
+        return {
+            id: balance.id,
+            amount,
+            unlockTime: unlockTime || new Date().toISOString(), // Default to now if no unlock time found
+            claimants: balance.claimants || []
+        };
+    });
 }
 
-// Start bot activity monitoring
+// Start bot activity monitoring with performance optimizations
 function startBotActivityMonitoring() {
     if (botActivityInterval) {
         clearInterval(botActivityInterval);
     }
+    
+    console.log('Starting bot activity monitoring');
     
     botActivityInterval = setInterval(() => {
         activeBots.forEach((bot, socketId) => {
@@ -258,12 +451,20 @@ function startBotActivityMonitoring() {
                             type: 'info'
                         });
                     }
+                    
+                    // If getting very close to unlock time, emit a countdown event
+                    if (status.timeToUnlock !== null && status.timeToUnlock < 5) {
+                        socket.emit('countdown', {
+                            timeToUnlock: status.timeToUnlock,
+                            unlockTime: status.unlockTime
+                        });
+                    }
                 }
             } catch (error) {
                 console.error(`Error monitoring bot for socket ${socketId}:`, error);
             }
         });
-    }, 1000); // Check every second
+    }, 500); // Increased frequency from 1000ms to 500ms for more responsive updates
 }
 
 // Stop bot activity monitoring
@@ -271,12 +472,13 @@ function stopBotActivityMonitoring() {
     if (botActivityInterval) {
         clearInterval(botActivityInterval);
         botActivityInterval = null;
+        console.log('Stopped bot activity monitoring');
     }
 }
 
-// Socket.IO connection handling
+// Socket.IO connection handling with optimized event processing
 io.on('connection', (socket) => {
-    console.log('Client connected:', socket.id);
+    console.log(`Client connected: ${socket.id}`);
     
     let bot = null;
     let publicKey = null;
@@ -287,7 +489,7 @@ io.on('connection', (socket) => {
         socket.emit('log', { message, type });
     };
     
-    // Handle login
+    // Handle login with enhanced error recovery
     socket.on('login', async (data) => {
         try {
             passphrase = data.passphrase;
@@ -308,8 +510,13 @@ io.on('connection', (socket) => {
             const account = await loadAccountWithFallback(publicKey);
             
             // Get native balance
-            const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-            const balance = nativeBalance ? nativeBalance.balance : '0';
+            let balance = '0';
+            if (account.balances) {
+                const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+                balance = nativeBalance ? nativeBalance.balance : '0';
+            } else if (account.balance) {
+                balance = account.balance;
+            }
             
             // Get locked balances
             emitLog('Fetching locked balances...');
@@ -353,8 +560,13 @@ io.on('connection', (socket) => {
             const account = await loadAccountWithFallback(publicKey);
             
             // Get native balance
-            const nativeBalance = account.balances.find(b => b.asset_type === 'native');
-            const balance = nativeBalance ? nativeBalance.balance : '0';
+            let balance = '0';
+            if (account.balances) {
+                const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+                balance = nativeBalance ? nativeBalance.balance : '0';
+            } else if (account.balance) {
+                balance = account.balance;
+            }
             
             // Get locked balances
             const lockedBalances = await getLockedBalances(publicKey);
@@ -412,20 +624,35 @@ io.on('connection', (socket) => {
                 const server = new StellarSdk.Server('https://api.mainnet.minepi.com');
                 transactions = await rateLimitedRequest(
                     () => server.transactions().forAccount(publicKey).limit(10).order('desc').call(),
+                    'getTransactions',
                     3,
                     2000
                 );
             } catch (error) {
                 console.warn(`Failed to fetch transactions with rate limiting: ${error.message}`);
                 
-                // Fallback approach with delay
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                // Try direct HTTP request as fallback
+                try {
+                    const txUrl = `https://api.mainnet.minepi.com/accounts/${publicKey}/transactions?order=desc&limit=10`;
+                    const response = await axiosInstance.get(txUrl);
+                    
+                    if (response.data && response.data._embedded && response.data._embedded.records) {
+                        transactions = { records: response.data._embedded.records };
+                    }
+                } catch (httpError) {
+                    console.warn(`Direct HTTP request for transactions failed: ${httpError.message}`);
+                }
                 
-                const server = new StellarSdk.Server('https://api.mainnet.minepi.com');
-                transactions = await server.transactions().forAccount(publicKey).limit(10).order('desc').call();
+                // Fallback approach with delay
+                if (!transactions) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    
+                    const server = new StellarSdk.Server('https://api.mainnet.minepi.com');
+                    transactions = await server.transactions().forAccount(publicKey).limit(10).order('desc').call();
+                }
             }
             
-            if (!transactions) {
+            if (!transactions || !transactions.records) {
                 throw new Error('Failed to fetch transactions from any server');
             }
             
@@ -436,12 +663,25 @@ io.on('connection', (socket) => {
             for (const txn of transactions.records) {
                 try {
                     // Add delay between operation requests to avoid rate limiting
-                    await apiRateLimiter.limit();
+                    await apiRateLimiter.limit('getOperations');
                     
-                    const operations = await server
-                        .operations()
-                        .forTransaction(txn.id)
-                        .call();
+                    let operations;
+                    try {
+                        operations = await server
+                            .operations()
+                            .forTransaction(txn.id)
+                            .call();
+                    } catch (error) {
+                        // Try direct HTTP request as fallback
+                        const opsUrl = `https://api.mainnet.minepi.com/transactions/${txn.id}/operations`;
+                        const response = await axiosInstance.get(opsUrl);
+                        
+                        if (response.data && response.data._embedded && response.data._embedded.records) {
+                            operations = { records: response.data._embedded.records };
+                        } else {
+                            throw error;
+                        }
+                    }
                     
                     for (const op of operations.records) {
                         let type = op.type;
@@ -490,7 +730,7 @@ io.on('connection', (socket) => {
         }
     });
     
-    // Handle start bot with enhanced configuration and rate limiting
+    // Handle start bot with ultra-enhanced configuration and optimized timing
     socket.on('start-bot', (data) => {
         if (!passphrase) {
             emitLog('Not logged in', 'error');
@@ -509,24 +749,30 @@ io.on('connection', (socket) => {
                 throw new Error(`Invalid target address: ${error.message}`);
             }
             
-            // Create new bot instance with enhanced configuration
+            // Create new bot instance with ultra-enhanced configuration
             bot = new PiNetworkTransferFloodBot({
                 sourcePassphrase: passphrase,
                 targetAddress: data.targetAddress,
                 transferAmount: data.transferAmount,
-                baseFee: data.baseFee || 3500000,  // Increased default fee
+                baseFee: data.baseFee || 6000000,  // Increased default fee to be more aggressive
                 unlockTime: data.unlockTime,
-                // Enhanced features
+                // Ultra-Enhanced features
                 timingPrecision: data.highPrecisionTiming !== undefined ? data.highPrecisionTiming : true,
                 redundantTimers: data.redundantTimers !== undefined ? data.redundantTimers : true,
                 proactivePreparation: true,
                 logLevel: 'info',
-                // Reduced values to avoid rate limiting
-                txCount: 50,
-                parallelConnections: 2,
-                preFloodSeconds: 5,
-                priorityFeeMultiplier: 2.5,
-                txSpacingMs: 10 // Increased spacing to avoid rate limiting
+                txCount: 150,  // Increased from 50 to 150 for more aggressive flooding
+                parallelConnections: 4, // Increased to 4 for more parallel connections
+                preFloodSeconds: 60, // Start preparing 1 minute before unlock
+                priorityFeeMultiplier: 3.0, // More aggressive fee multiplication
+                txSpacingMs: 5, // Reduced from 10ms to 5ms for faster flooding
+                earlyPreparationMinutes: 5, // Start preparing 5 minutes before unlock
+                useWorkerThreads: true, // Use worker threads for parallel processing
+                aggressiveMemoryCache: true, // Cache more data in memory
+                useHttp2: true, // Use HTTP/2 for better multiplexing
+                useTcpKeepAlive: true, // Use TCP keep-alive
+                predictiveExecution: true, // Use predictive timing
+                smartBackoff: true // Use smart backoff strategy
             });
             
             // Intercept logs to forward to client
@@ -553,10 +799,20 @@ io.on('connection', (socket) => {
             // Store bot in active bots
             activeBots.set(socket.id, bot);
             
+            // Set up event listeners for the bot
+            bot.events.on('transactions-prepared', (data) => {
+                socket.emit('transactions-prepared', data);
+                emitLog(`Prepared ${data.count} transactions with fees from ${data.minFee} to ${data.maxFee} stroops`, 'info');
+            });
+            
+            bot.events.on('new-ledger', (data) => {
+                socket.emit('new-ledger', data);
+            });
+            
             // Start bot
             bot.start().catch(error => {
                 console.error('Uncaught exception:', error);
-                console.log('Server continuing despite error...');
+                emitLog(`Error starting bot: ${error.message}`, 'error');
             });
             
             emitLog('Bot started successfully', 'success');
@@ -603,6 +859,15 @@ io.on('connection', (socket) => {
         }
     });
     
+    // Handle time synchronization request
+    socket.on('sync-time', () => {
+        const serverTime = Date.now();
+        socket.emit('time-sync', {
+            serverTime,
+            timestamp: new Date(serverTime).toISOString()
+        });
+    });
+    
     // Handle disconnection
     socket.on('disconnect', () => {
         console.log('Client disconnected:', socket.id);
@@ -624,54 +889,81 @@ io.on('connection', (socket) => {
     });
 });
 
-// Process termination handlers
+// Process termination handlers with graceful shutdown
 process.on('SIGINT', () => {
     console.log('Received SIGINT. Shutting down server...');
-    stopBotActivityMonitoring();
-    
-    // Stop all active bots
-    activeBots.forEach((bot) => {
-        bot.stop();
-    });
-    
-    // Clear the activeBots map
-    activeBots.clear();
-    
-    // Close the server
-    server.close(() => {
-        console.log('Server shutdown complete');
-        process.exit(0);
-    });
+    shutdown();
 });
 
 process.on('SIGTERM', () => {
     console.log('Received SIGTERM. Shutting down server...');
+    shutdown();
+});
+
+// Graceful shutdown function
+function shutdown() {
     stopBotActivityMonitoring();
     
     // Stop all active bots
+    const shutdownPromises = [];
+    
     activeBots.forEach((bot) => {
-        bot.stop();
+        try {
+            bot.stop();
+            
+            // If the bot has a cleanup method, call it
+            if (typeof bot.cleanup === 'function') {
+                shutdownPromises.push(bot.cleanup());
+            }
+        } catch (error) {
+            console.error(`Error stopping bot: ${error.message}`);
+        }
     });
     
     // Clear the activeBots map
     activeBots.clear();
     
-    // Close the server
-    server.close(() => {
-        console.log('Server shutdown complete');
-        process.exit(0);
-    });
-});
+    // Close all connections and exit
+    Promise.all(shutdownPromises)
+        .then(() => {
+            server.close(() => {
+                console.log('Server shutdown complete');
+                process.exit(0);
+            });
+        })
+        .catch((error) => {
+            console.error(`Error during shutdown: ${error.message}`);
+            server.close(() => {
+                console.log('Server shutdown complete with errors');
+                process.exit(1);
+            });
+        });
+    
+    // Force exit after 10 seconds if graceful shutdown fails
+    setTimeout(() => {
+        console.error('Forced exit after timeout during shutdown');
+        process.exit(1);
+    }, 10000);
+}
 
-// Uncaught exception handler
+// Uncaught exception handler with better error information
 process.on('uncaughtException', (error) => {
     console.error('Uncaught exception:', error);
+    console.error('Stack trace:', error.stack);
     
     // Log but don't exit - keep server running
     console.log('Server continuing despite error...');
 });
 
-// Start server
+// Unhandled promise rejection handler
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Promise Rejection:', reason);
+    
+    // Log but don't exit - keep server running
+    console.log('Server continuing despite unhandled promise rejection...');
+});
+
+// Start server with optimized settings
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`Enhanced Pi Transfer Flood Bot Server running on port ${PORT}`);
