@@ -1,11 +1,12 @@
 /**
- * Pi Network Transfer Flood Bot - Enhanced Version
+ * Pi Network Transfer Flood Bot - Enhanced Version with Rate Limiting
  * 
  * High-performance transaction flooding bot with hyper-precise timing mechanisms
  * designed to outperform competing bots written in Rust and Go.
  * 
  * Key improvements:
  * - Multiple redundant timing mechanisms with nanosecond precision targeting
+ * - Rate limiting mechanisms to prevent API throttling
  * - Aggressive pre-warming and caching of network connections
  * - Multi-phase transaction flooding with dynamic fee escalation
  * - Advanced transaction preparation and parallelization
@@ -29,15 +30,15 @@ class PiNetworkTransferFloodBot {
         targetAddress = null,
         transferAmount = null,
         unlockTime = null,
-        txCount = 100,               // Higher count for more aggressive flooding
+        txCount = 50,                // Reduced from 100 to avoid rate limiting
         baseFee = 3500000,           // Higher starting fee based on competitor analysis
         feeIncrement = 200000,       // Larger fee increment to ensure priority
-        txSpacingMs = 2,             // Reduced spacing for faster flooding
+        txSpacingMs = 10,            // Increased from 2ms to avoid rate limiting
         derivationPath = "m/44'/314159'/0'",
-        parallelConnections = 10,    // Increased parallel connections
+        parallelConnections = 2,     // Reduced from 10 to avoid rate limiting
         preFloodSeconds = 5,         // Start preparing earlier
-        burstFactor = 5,             // More aggressive bursting
-        maxRetries = 15,             // More persistent retries
+        burstFactor = 3,             // Reduced from 5 to avoid rate limiting
+        maxRetries = 10,             // More persistent retries
         priorityFeeMultiplier = 2.5, // More aggressive fee multiplication for priority txs
         timingPrecision = true,      // Enable high-precision timing
         redundantTimers = true,      // Use multiple redundant timers
@@ -105,6 +106,11 @@ class PiNetworkTransferFloodBot {
         // Cached account data
         this.accountData = null;
         this.accountSequence = null;
+        this.accountDataTimestamp = 0;
+        
+        // Rate limiting
+        this.lastSubmissionTime = 0;
+        this.minTimeBetweenSubmissions = 100; // ms
         
         this.log('debug', `Initialized Pi Network Transfer Flood Bot (Enhanced)`);
     }
@@ -122,6 +128,37 @@ class PiNetworkTransferFloodBot {
             const now = new Date();
             const timestamp = now.toISOString().replace('T', ' ').substring(0, 23);
             console.log(`[${timestamp}] [${level.toUpperCase()}]`, ...args);
+        }
+    }
+    
+    /**
+     * Rate-limited API request with exponential backoff retry
+     */
+    async rateLimit(fn, maxRetries = 5, initialDelay = 1000) {
+        let retries = 0;
+        
+        while (retries <= maxRetries) {
+            try {
+                return await fn();
+            } catch (error) {
+                if (error.response && error.response.status === 429) {
+                    // Too Many Requests error
+                    retries++;
+                    if (retries > maxRetries) {
+                        throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
+                    }
+                    
+                    // Calculate delay with exponential backoff
+                    const delay = initialDelay * Math.pow(2, retries - 1);
+                    this.log('info', `Rate limited. Retrying after ${delay}ms (attempt ${retries}/${maxRetries})`);
+                    
+                    // Wait before retrying
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    // Different error, rethrow
+                    throw error;
+                }
+            }
         }
     }
     
@@ -154,7 +191,7 @@ class PiNetworkTransferFloodBot {
     }
 
     /**
-     * Initialize keypair and validate accounts
+     * Initialize keypair and validate accounts with rate limiting
      */
     async initializeKeypairs() {
         if (this.sourcePassphrase) {
@@ -168,17 +205,40 @@ class PiNetworkTransferFloodBot {
             throw new Error('Target address is required');
         }
 
-        // Use multiple servers to try loading the account for redundancy
+        // Use rate-limited approach to load account
         let accountLoaded = false;
-        for (let i = 0; i < this.servers.length; i++) {
-            try {
-                this.accountData = await this.servers[i].loadAccount(this.sourceKeypair.publicKey());
-                this.accountSequence = BigInt(this.accountData.sequenceNumber());
-                accountLoaded = true;
-                this.log('info', `Successfully loaded source account (using server ${i+1})`);
-                break;
-            } catch (error) {
-                this.log('warn', `Error loading source account from server ${i+1}:`, error.message);
+        
+        try {
+            this.log('info', 'Loading account data (rate-limited)...');
+            
+            // Use rate limiting with the first server
+            this.accountData = await this.rateLimit(
+                () => this.servers[0].loadAccount(this.sourceKeypair.publicKey()),
+                5,  // 5 retries maximum
+                2000 // Start with 2 second delay, then exponential backoff
+            );
+            
+            this.accountSequence = BigInt(this.accountData.sequenceNumber());
+            this.accountDataTimestamp = Date.now();
+            accountLoaded = true;
+            this.log('info', `Successfully loaded source account with rate limiting`);
+        } catch (error) {
+            this.log('error', `Failed to load account with rate limiting: ${error.message}`);
+            
+            // Fallback to sequential attempts with fewer servers
+            const maxServers = Math.min(3, this.servers.length);
+            for (let i = 0; i < maxServers; i++) {
+                try {
+                    await new Promise(resolve => setTimeout(resolve, 2000 * i)); // Staggered delays
+                    this.accountData = await this.servers[i].loadAccount(this.sourceKeypair.publicKey());
+                    this.accountSequence = BigInt(this.accountData.sequenceNumber());
+                    this.accountDataTimestamp = Date.now();
+                    accountLoaded = true;
+                    this.log('info', `Successfully loaded source account (using server ${i+1})`);
+                    break;
+                } catch (error) {
+                    this.log('warn', `Error loading source account from server ${i+1}: ${error.message}`);
+                }
             }
         }
 
@@ -248,67 +308,128 @@ class PiNetworkTransferFloodBot {
         this.log('info', 'Starting block monitoring...');
         this.blockMonitoringActive = true;
 
-        // Get current ledger info from multiple servers for redundancy
-        for (let i = 0; i < this.servers.length; i++) {
-            try {
-                const latestLedger = await this.servers[i].ledgers().order('desc').limit(1).call();
-                this.latestLedgerNum = latestLedger.records[0].sequence;
-                this.lastLedgerCloseTime = new Date(latestLedger.records[0].closed_at).getTime();
-                
-                this.log('info', `Current ledger: ${this.latestLedgerNum}, closed at: ${latestLedger.records[0].closed_at} (from server ${i+1})`);
-                break;
-            } catch (error) {
-                this.log('warn', `Failed to get ledger from server ${i+1}: ${error.message}`);
+        // Get current ledger info from multiple servers for redundancy with rate limiting
+        let ledgerLoaded = false;
+        
+        try {
+            const latestLedger = await this.rateLimit(
+                () => this.servers[0].ledgers().order('desc').limit(1).call(),
+                3,
+                1500
+            );
+            
+            this.latestLedgerNum = latestLedger.records[0].sequence;
+            this.lastLedgerCloseTime = new Date(latestLedger.records[0].closed_at).getTime();
+            
+            this.log('info', `Current ledger: ${this.latestLedgerNum}, closed at: ${latestLedger.records[0].closed_at}`);
+            ledgerLoaded = true;
+        } catch (error) {
+            this.log('warn', `Failed to get ledger with rate limiting: ${error.message}`);
+            
+            // Try other servers with delays
+            for (let i = 0; i < this.servers.length && !ledgerLoaded; i++) {
+                try {
+                    await new Promise(resolve => setTimeout(resolve, 1000 * i));
+                    const latestLedger = await this.servers[i].ledgers().order('desc').limit(1).call();
+                    this.latestLedgerNum = latestLedger.records[0].sequence;
+                    this.lastLedgerCloseTime = new Date(latestLedger.records[0].closed_at).getTime();
+                    
+                    this.log('info', `Current ledger: ${this.latestLedgerNum}, closed at: ${latestLedger.records[0].closed_at} (from server ${i+1})`);
+                    ledgerLoaded = true;
+                    break;
+                } catch (error) {
+                    this.log('warn', `Failed to get ledger from server ${i+1}: ${error.message}`);
+                }
             }
         }
 
         // Setup WebSocket connections for real-time updates
         this.setupWebSocketConnections();
 
-        // Start standard block monitoring interval
+        // Start standard block monitoring interval - with slightly longer interval to avoid rate limiting
         this.blockMonitorInterval = setInterval(async () => {
             if (!this.isRunning) return;
             
             try {
-                // Get ledger updates from multiple servers
+                // Get ledger updates with rate limiting
                 let newLedgerFound = false;
                 
-                for (let i = 0; !newLedgerFound && i < this.servers.length; i++) {
-                    try {
-                        const ledger = await this.servers[i].ledgers().order('desc').limit(1).call();
-                        const currentLedgerNum = ledger.records[0].sequence;
-                        const currentCloseTime = new Date(ledger.records[0].closed_at).getTime();
+                try {
+                    const ledger = await this.rateLimit(
+                        () => this.servers[0].ledgers().order('desc').limit(1).call(),
+                        2,
+                        1000
+                    );
+                    
+                    const currentLedgerNum = ledger.records[0].sequence;
+                    const currentCloseTime = new Date(ledger.records[0].closed_at).getTime();
 
-                        // Only process if this is a new ledger
-                        if (currentLedgerNum > this.latestLedgerNum) {
-                            const blockTime = currentCloseTime - this.lastLedgerCloseTime;
-                            this.blockTimes.push(blockTime);
-                            
-                            // Keep only the last 10 block times for average calculation
-                            if (this.blockTimes.length > 10) {
-                                this.blockTimes.shift();
+                    // Only process if this is a new ledger
+                    if (currentLedgerNum > this.latestLedgerNum) {
+                        const blockTime = currentCloseTime - this.lastLedgerCloseTime;
+                        this.blockTimes.push(blockTime);
+                        
+                        // Keep only the last 10 block times for average calculation
+                        if (this.blockTimes.length > 10) {
+                            this.blockTimes.shift();
+                        }
+                        
+                        // Calculate average block time
+                        this.avgBlockTimeMs = this.blockTimes.reduce((sum, time) => sum + time, 0) / this.blockTimes.length;
+                        
+                        this.log('debug', `New ledger: ${currentLedgerNum}, block time: ${blockTime}ms, avg: ${this.avgBlockTimeMs}ms`);
+                        
+                        this.latestLedgerNum = currentLedgerNum;
+                        this.lastLedgerCloseTime = currentCloseTime;
+                        newLedgerFound = true;
+                        
+                        // Check if we're approaching unlock time
+                        this.checkUnlockTimeProximity();
+                    }
+                } catch (error) {
+                    this.log('warn', `Error getting ledger with rate limiting: ${error.message}`);
+                    
+                    // Fallback to sequential checks with different servers
+                    for (let i = 0; !newLedgerFound && i < this.servers.length; i++) {
+                        try {
+                            // Add delay between server calls to avoid rate limiting
+                            if (i > 0) {
+                                await new Promise(resolve => setTimeout(resolve, 500 * i));
                             }
                             
-                            // Calculate average block time
-                            this.avgBlockTimeMs = this.blockTimes.reduce((sum, time) => sum + time, 0) / this.blockTimes.length;
+                            const ledger = await this.servers[i].ledgers().order('desc').limit(1).call();
+                            const currentLedgerNum = ledger.records[0].sequence;
                             
-                            this.log('debug', `New ledger: ${currentLedgerNum}, block time: ${blockTime}ms, avg: ${this.avgBlockTimeMs}ms`);
-                            
-                            this.latestLedgerNum = currentLedgerNum;
-                            this.lastLedgerCloseTime = currentCloseTime;
-                            newLedgerFound = true;
-                            
-                            // Check if we're approaching unlock time
-                            this.checkUnlockTimeProximity();
+                            if (currentLedgerNum > this.latestLedgerNum) {
+                                // Update block information
+                                const currentCloseTime = new Date(ledger.records[0].closed_at).getTime();
+                                const blockTime = currentCloseTime - this.lastLedgerCloseTime;
+                                
+                                this.blockTimes.push(blockTime);
+                                if (this.blockTimes.length > 10) {
+                                    this.blockTimes.shift();
+                                }
+                                
+                                this.avgBlockTimeMs = this.blockTimes.reduce((sum, time) => sum + time, 0) / this.blockTimes.length;
+                                this.log('debug', `New ledger from server ${i+1}: ${currentLedgerNum}, block time: ${blockTime}ms`);
+                                
+                                this.latestLedgerNum = currentLedgerNum;
+                                this.lastLedgerCloseTime = currentCloseTime;
+                                newLedgerFound = true;
+                                
+                                // Check proximity to unlock time
+                                this.checkUnlockTimeProximity();
+                                break;
+                            }
+                        } catch (error) {
+                            this.log('warn', `Error getting ledger from server ${i+1}: ${error.message}`);
                         }
-                    } catch (error) {
-                        this.log('warn', `Error getting ledger from server ${i+1}: ${error.message}`);
                     }
                 }
             } catch (error) {
                 this.log('error', 'Error monitoring blocks:', error.message);
             }
-        }, 1000); // Check every second
+        }, 2000); // Check every 2 seconds to reduce rate limiting (increased from 1 second)
         
         // Additional high-frequency proximity check for more precision
         this.precisionInterval = setInterval(() => {
@@ -319,7 +440,7 @@ class PiNetworkTransferFloodBot {
             if (this.unlockTime && Math.abs(this.unlockTime - now) < 10000) { // Within 10 seconds
                 this.checkUnlockTimeProximity();
             }
-        }, 100); // Check every 100ms when we're close
+        }, 200); // Check every 200ms when we're close (increased from 100ms)
 
         return this;
     }
@@ -499,6 +620,7 @@ class PiNetworkTransferFloodBot {
 
     /**
      * Prepare transfer transactions in advance with optimized fee strategy
+     * and rate limiting protection
      */
     async prepareTransactions() {
         if (this.isPrepared) {
@@ -509,25 +631,41 @@ class PiNetworkTransferFloodBot {
         try {
             this.log('info', 'Preparing transactions...');
             
-            // Refresh account data if not cached or if it's more than 10 seconds old
+            // Refresh account data with rate limiting if needed
             if (!this.accountData || Date.now() - this.accountDataTimestamp > 10000) {
-                let accountLoaded = false;
-                
-                for (let i = 0; i < this.servers.length; i++) {
-                    try {
-                        this.accountData = await this.servers[i].loadAccount(this.sourceKeypair.publicKey());
-                        this.accountSequence = BigInt(this.accountData.sequenceNumber());
-                        this.accountDataTimestamp = Date.now();
-                        accountLoaded = true;
-                        this.log('debug', `Refreshed account data from server ${i+1}`);
-                        break;
-                    } catch (error) {
-                        this.log('warn', `Failed to refresh account from server ${i+1}: ${error.message}`);
+                try {
+                    this.log('info', 'Refreshing account data...');
+                    this.accountData = await this.rateLimit(
+                        () => this.servers[0].loadAccount(this.sourceKeypair.publicKey()),
+                        3,  // 3 retries maximum
+                        2000 // 2 second initial delay
+                    );
+                    this.accountSequence = BigInt(this.accountData.sequenceNumber());
+                    this.accountDataTimestamp = Date.now();
+                    this.log('debug', `Refreshed account data successfully`);
+                } catch (error) {
+                    this.log('warn', `Failed to refresh account data: ${error.message}`);
+                    
+                    // Try with different servers if rate limited
+                    if (!this.accountData) {
+                        let loaded = false;
+                        for (let i = 0; i < this.servers.length && !loaded; i++) {
+                            try {
+                                await new Promise(resolve => setTimeout(resolve, 1000 * i));
+                                this.accountData = await this.servers[i].loadAccount(this.sourceKeypair.publicKey());
+                                this.accountSequence = BigInt(this.accountData.sequenceNumber());
+                                this.accountDataTimestamp = Date.now();
+                                loaded = true;
+                                this.log('info', `Loaded account data from server ${i+1}`);
+                            } catch (e) {
+                                this.log('warn', `Failed to load account from server ${i+1}: ${e.message}`);
+                            }
+                        }
+                        
+                        if (!loaded) {
+                            throw new Error('Failed to load account data from any server');
+                        }
                     }
-                }
-                
-                if (!accountLoaded) {
-                    throw new Error('Failed to refresh account data from any server');
                 }
             }
             
@@ -628,7 +766,7 @@ class PiNetworkTransferFloodBot {
 
     /**
      * Execute the transaction flood using distributed and concurrent approach
-     * with enhanced timing precision and retry logic
+     * with enhanced timing precision, retry logic, and rate limiting
      */
     async executeFlood() {
         if (this.floodExecuted) {
@@ -647,7 +785,7 @@ class PiNetworkTransferFloodBot {
         
         // Create bursts of transactions
         const burstCount = 4;  // Number of bursts
-        const burstDelay = 75;  // Milliseconds between bursts
+        const burstDelay = 500;  // Increased from 75ms to 500ms to avoid rate limiting
         
         // Store successful transactions to avoid duplicates
         const successful = new Set();
@@ -658,12 +796,20 @@ class PiNetworkTransferFloodBot {
                 return;
             }
             
+            // Add rate limiting between submissions
+            const now = Date.now();
+            const timeSinceLastSubmission = now - this.lastSubmissionTime;
+            if (timeSinceLastSubmission < this.minTimeBetweenSubmissions) {
+                await new Promise(resolve => setTimeout(resolve, this.minTimeBetweenSubmissions - timeSinceLastSubmission));
+            }
+            
             // Choose the server based on round-robin
             const server = this.getNextServer();
             
             try {
                 this.log('debug', `Submitting tx ${txInfo.index + 1}/${this.transactions.length} with fee: ${txInfo.fee} stroops (priority: ${txInfo.priority})`);
                 const result = await server.submitTransaction(txInfo.tx);
+                this.lastSubmissionTime = Date.now();
                 
                 // Mark as successful and log
                 successful.add(txInfo.index);
@@ -691,27 +837,34 @@ class PiNetworkTransferFloodBot {
             } catch (error) {
                 txInfo.attempts++;
                 this.failureCount++;
+                this.lastSubmissionTime = Date.now();
                 
                 // Determine if we should retry based on error and priority
                 let shouldRetry = txInfo.attempts < txInfo.maxAttempts;
+                let isRateLimited = false;
                 
                 // Parse error from Stellar
                 let errorDetail = '';
                 try {
-                    if (error.response && error.response.data) {
-                        const responseData = error.response.data;
-                        errorDetail = responseData.extras ? 
-                            `${responseData.extras.result_codes.transaction}: ${JSON.stringify(responseData.extras.result_codes.operations)}` :
-                            responseData.detail || '';
+                    if (error.response) {
+                        if (error.response.status === 429) {
+                            isRateLimited = true;
+                            errorDetail = 'Rate limited (429 Too Many Requests)';
+                        } else if (error.response.data) {
+                            const responseData = error.response.data;
+                            errorDetail = responseData.extras ? 
+                                `${responseData.extras.result_codes.transaction}: ${JSON.stringify(responseData.extras.result_codes.operations)}` :
+                                responseData.detail || '';
+                                
+                            // If we got a "tx_bad_seq" error, no point retrying this specific tx
+                            if (errorDetail.includes('tx_bad_seq')) {
+                                shouldRetry = false;
+                            }
                             
-                        // If we got a "tx_bad_seq" error, no point retrying this specific tx
-                        if (errorDetail.includes('tx_bad_seq')) {
-                            shouldRetry = false;
-                        }
-                        
-                        // If we got a "tx_fee_bump_inner_failed" or similar, reduce retries
-                        if (errorDetail.includes('tx_fee_bump_inner_failed')) {
-                            txInfo.maxAttempts = Math.min(txInfo.maxAttempts, txInfo.attempts + 2);
+                            // If we got a "tx_fee_bump_inner_failed" or similar, reduce retries
+                            if (errorDetail.includes('tx_fee_bump_inner_failed')) {
+                                txInfo.maxAttempts = Math.min(txInfo.maxAttempts, txInfo.attempts + 2);
+                            }
                         }
                     }
                 } catch (e) {
@@ -723,12 +876,15 @@ class PiNetworkTransferFloodBot {
                 
                 // If we should retry, schedule a retry with optimized backoff
                 if (shouldRetry) {
-                    // Prioritize retries for high-priority transactions
+                    // Prioritize retries for high-priority transactions and use longer backoff for rate limiting
                     const priorityMultiplier = txInfo.priority === 'high' ? 0.5 : 
-                                               txInfo.priority === 'medium' ? 1.0 : 2.0;
-                                               
+                                              txInfo.priority === 'medium' ? 1.0 : 2.0;
+                                              
+                    // Use much longer backoff for rate limiting
+                    const baseBackoff = isRateLimited ? 2000 : 100;
+                    
                     // Use shorter backoff for higher priority transactions
-                    const backoffMs = Math.min(25 * Math.pow(1.4, txInfo.attempts) * priorityMultiplier, 1000);
+                    const backoffMs = Math.min(baseBackoff * Math.pow(1.5, txInfo.attempts) * priorityMultiplier, 10000);
                     
                     setTimeout(() => {
                         if (this.isRunning && !successful.has(txInfo.index)) {
@@ -767,12 +923,12 @@ class PiNetworkTransferFloodBot {
                     endIndex = this.transactions.length;
                 }
                 
-                // Submit all transactions in this burst with minimal spacing
+                // Submit all transactions in this burst with increased spacing to avoid rate limiting
                 for (let i = startIndex; i < endIndex; i++) {
                     const txInfo = this.transactions[i];
                     
-                    // Use varying delays based on priority
-                    const delay = i * this.txSpacingMs * (burst === 0 ? 0.5 : 1.0);
+                    // Use varying delays based on priority and burst
+                    const delay = i * this.txSpacingMs * (burst === 0 ? 1.0 : burst * 1.5);
                     
                     setTimeout(() => {
                         submitTransaction(txInfo);
@@ -905,7 +1061,7 @@ class PiNetworkTransferFloodBot {
     }
 
     /**
-     * Initialize the bot and start monitoring
+     * Initialize the bot and start monitoring with rate limiting protection
      */
     async start() {
         if (this.isRunning) {
@@ -1005,7 +1161,7 @@ class PiNetworkTransferFloodBot {
     }
     
     /**
-     * Get the current bot status
+     * Get the current bot status and network information
      */
     getStatus() {
         return {
@@ -1017,7 +1173,10 @@ class PiNetworkTransferFloodBot {
             unlockTime: this.unlockTime ? new Date(this.unlockTime).toISOString() : null,
             timeToUnlock: this.unlockTime ? (this.unlockTime - Date.now()) / 1000 : null,
             successCount: this.successCount,
-            failureCount: this.failureCount
+            failureCount: this.failureCount,
+            latestLedgerNum: this.latestLedgerNum,
+            lastLedgerTime: this.lastLedgerCloseTime ? new Date(this.lastLedgerCloseTime).toISOString() : null,
+            avgBlockTimeMs: this.avgBlockTimeMs
         };
     }
 }
